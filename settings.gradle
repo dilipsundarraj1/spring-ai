@@ -1,0 +1,6 @@
+rootProject.name = 'explore-spring-ai'
+
+include("explore-openai")
+include("explore-llama")
+include("multiple-llms")
+

@@ -1,0 +1,25 @@
+server:
+  port: 8082
+  servlet:
+    context-path: /springai
+spring:
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+  ai:
+    chat:
+      client:
+        enabled: false
+    openai:
+      api-key: ${OPENAI_KEY}
+      chat:
+        enabled: true # By default its true, this triggers the autoconfiguration.
+        options:
+          model: gpt-4o
+          temperature: 1.0
+          max_completion_tokens: 500
+    ollama:
+      chat:
+        options:
+          model: llama3

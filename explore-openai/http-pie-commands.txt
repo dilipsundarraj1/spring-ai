@@ -1,0 +1,36 @@
+-------
+chats: |
+-------
+
+http POST http://localhost:8080/chats prompt="Tell me a joke"
+
+http POST http://localhost:8080/chats prompt="Build a function to sort the numbers in java"
+
+http POST http://localhost:8080/chats prompt="Build a rest client in Java"
+
+
+-------------------------
+chats - Temperature 2.0: |
+-------------------------
+
+http POST http://localhost:8080/chats prompt="What is 109 * 25 ?"
+
+-------------------
+chats with Stream: |
+-------------------
+
+http --stream POST http://localhost:8080/v1/chats/stream prompt="Build a rest client in Java"
+
+--------
+Vision |
+--------
+
+http  POST http://localhost:8080/vision prompt="Explain what do you see in this picture?"
+
+http  POST http://localhost:8080/vision prompt="Explain what do you see in this picture?"
+
+---------
+Advisors |
+---------
+
+http POST http://localhost:8080/springai/v1/advisors prompt="Tell me a joke"

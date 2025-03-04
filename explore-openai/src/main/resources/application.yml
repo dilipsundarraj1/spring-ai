@@ -1,0 +1,48 @@
+server:
+  servlet:
+    context-path: /springai
+spring:
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+  ai:
+    openai:
+      api-key: ${OPENAI_KEY}
+      chat:
+        enabled: true # By default its true, this triggers the autoconfiguration.
+        options:
+          model: gpt-4o
+          temperature: 1.0
+          max_completion_tokens: 500
+      image:
+#        api-key: ${OPENAI_KEY}
+        enabled: true
+        options:
+          quality: "hd"
+          n: 1
+          height: 1024
+          width: 1024
+      audio:
+        speech:
+          enabled: true
+#          api-key: ${OPENAI_KEY}
+          options:
+            speed: 1.0
+            model: "tts-1"
+            response-format: "mp3"
+            voice: "alloy"
+        transcription:
+          enabled: true
+#          api-key: ${OPENAI_KEY}
+          options:
+            prompt: Extract text from the file.
+            response-format: JSON
+logging:
+  level:
+    org:
+      springframework:
+        ai.chat.client.advisor.SimpleLoggerAdvisor: DEBUG
+weather:
+  api-key : 04e82fac62a34b36b34120424242610
+  api-url : http://api.weatherapi.com/v1
