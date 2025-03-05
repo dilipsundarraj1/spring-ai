@@ -8,7 +8,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
-import org.springframework.ai.chat.prompt.ChatOptionsBuilder;
 import org.springframework.ai.model.ModelOptionsUtils;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -37,7 +36,7 @@ public class AdvisorsChatController {
 
         var responseSpec = chatClient
                 .prompt()
-                .advisors(new SimpleLoggerAdvisor(ModelOptionsUtils::toJsonString, ModelOptionsUtils::toJsonString))
+//                .advisors(new SimpleLoggerAdvisor(ModelOptionsUtils::toJsonString, ModelOptionsUtils::toJsonString))
                 .user(userInput.prompt())
                 .system(systemMessage)
                 .call();

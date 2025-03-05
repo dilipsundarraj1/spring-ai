@@ -1,7 +1,6 @@
 package com.llm.chats_memory;
 
 import com.llm.dto.UserInput;
-import com.llm.rag.RAGController;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -12,7 +11,10 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 public class ChatMemoryController {
 
-    Logger log = LoggerFactory.getLogger(RAGController.class);
+//    Logger log = LoggerFactory.getLogger(ChatMemoryController.class);
+    Logger log = LoggerFactory.getLogger(this.getClass().getName());
+
+
 
     private final ChatClient chatClient;
 

@@ -64,10 +64,10 @@ public class TranscriptionController {
 
         var audioFile = file.getResource();
         OpenAiAudioTranscriptionOptions transcriptionOptions = OpenAiAudioTranscriptionOptions.builder()
-                .withLanguage(language)
-                .withPrompt(prompt)
-                .withTemperature(temperature)
-                .withResponseFormat(responseFormatEnum)
+                .language(language)
+                .prompt(prompt)
+                .temperature(temperature)
+                .responseFormat(responseFormatEnum)
                 .build();
 
         log.info("transcriptionOptions : {} ", transcriptionOptions);

@@ -6,8 +6,7 @@ import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.messages.SystemMessage;
-import org.springframework.ai.chat.prompt.ChatOptionsBuilder;
+import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
@@ -81,10 +80,10 @@ public class ChatController {
 
         log.info("temperature : {},  maxTokens : {} ", temperature, maxTokens);
 
-        var chatOptions = ChatOptionsBuilder
+        var chatOptions = ChatOptions
                 .builder()
-                .withTemperature(temperature)
-//                .withMaxTokens(maxTokens)
+                .temperature(temperature)
+//                .maxTokens(maxTokens)
                 .build();
 
         var systemMessage = """

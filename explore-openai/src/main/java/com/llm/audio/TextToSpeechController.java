@@ -60,10 +60,10 @@ public class TextToSpeechController {
         }
 
         var speechOptions = OpenAiAudioSpeechOptions.builder()
-                .withSpeed(speed)
-                .withModel(model)
-                .withResponseFormat(responseFormat)
-                .withVoice(voice)
+                .speed(speed)
+                .model(model)
+                .responseFormat(responseFormat)
+                .voice(voice)
                 .build();
 
         log.info("speechOptions : {} ", speechOptions);
