@@ -1,4 +1,4 @@
-rootProject.name = 'explore-spring-ai'
+rootProject.name = 'spring-ai'
 
 include("explore-openai")
 include("explore-llama")
