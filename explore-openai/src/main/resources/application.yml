@@ -14,7 +14,7 @@ spring:
         options:
           model: gpt-4o
           temperature: 1.0
-          max_completion_tokens: 500
+          max_completion_tokens: 2000
       image:
 #        api-key: ${OPENAI_KEY}
         enabled: true

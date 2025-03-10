@@ -26,7 +26,7 @@ public class ChatController {
 
 
     @PostMapping("/v1/chats")
-    public String chat(@RequestBody @Valid UserInput userInput) {
+    public AIResponse chat(@RequestBody @Valid UserInput userInput) {
         log.info("userInput message : {} ", userInput);
         //customChatClient(userInput);
         var requestSpec = chatClient.prompt()
@@ -40,7 +40,7 @@ public class ChatController {
         var responseSpec = requestSpec.call();
         log.info("responseSpec1 : {} ", responseSpec);
         log.info("content : {} ", responseSpec.content());
-        return responseSpec.content();
+        return new AIResponse(responseSpec.content());
     }
 
     @PostMapping("/v1/chats/entity")
@@ -65,7 +65,17 @@ public class ChatController {
                 .stream()
                 .content()
                 .doOnNext(s -> log.info("s : {}", s))
-                .doOnComplete(() -> log.info("Data complete"));
+                .doOnComplete(() -> log.info("Data complete"))
+//                .onErrorReturn("Error occurred in the stream");
+//                .onErrorComplete(throwable -> );
+                .onErrorResume(throwable -> {
+                    log.error("Error occurred in the stream", throwable);
+                    var error = """
+                            Error occurred in the stream:
+                            %s
+                            """.formatted(throwable.getMessage());
+                    return Flux.error(new RuntimeException(error));
+                });
     }
 
     @PostMapping("/v2/chats")
@@ -91,7 +101,7 @@ public class ChatController {
                 For any other questions, please respond with I don't know in a funny way!
                 """;
 
-        var responseSpec =  ChatClient.builder(openAiChatModel)
+        var responseSpec = ChatClient.builder(openAiChatModel)
                 .build()
                 .prompt()
                 .options(chatOptions)
@@ -102,5 +112,58 @@ public class ChatController {
         log.info("responseSpec : {} ", responseSpec);
         return responseSpec.content();
     }
+
+
+    @PostMapping("/v2/chats/stream")
+    public  Flux<String> chatV2Stream(@RequestBody UserInput userInput) {
+        log.info("userInput message in chats_v2 stream: {} ", userInput);
+
+        var userChatOptions = userInput.chatOptions();
+
+        var temperature = (userChatOptions.temperature() == null || userChatOptions.temperature() == 0.0)
+                ? 1.0f : userChatOptions.temperature();
+        var maxTokens = (userChatOptions.maxTokens() == 0) ? 100 : userChatOptions.maxTokens();
+
+        log.info("temperature : {},  maxTokens : {} ", temperature, maxTokens);
+
+        var chatOptions = ChatOptions
+                .builder()
+                .temperature(temperature)
+//                .maxTokens(maxTokens)
+                .build();
+
+        var systemMessage = """
+                You are a helpful assistant, who can answer java based questions.
+                For any other questions, please respond with I don't know in a funny way!
+                """;
+
+        var responseSpec = ChatClient.builder(openAiChatModel)
+                .build()
+                .prompt()
+                .options(chatOptions)
+                .user(userInput.prompt())
+                .system(systemMessage)
+                .stream()
+                .content()
+                .doOnNext(s -> log.info("s : {}", s))
+                .doOnComplete(() -> log.info("Data complete"))
+//                .onErrorReturn("Error occurred in the stream");
+//                .onErrorComplete(throwable -> );
+                .onErrorResume(throwable -> {
+                    log.error("Error occurred in the stream", throwable);
+                    var error = """
+                            Error occurred in the stream:
+                            %s
+                            """.formatted(throwable.getMessage());
+                    return Flux.error(new RuntimeException(error));
+                });
+        ;
+
+
+        return responseSpec;
+    }
+
+
+
 
 }
