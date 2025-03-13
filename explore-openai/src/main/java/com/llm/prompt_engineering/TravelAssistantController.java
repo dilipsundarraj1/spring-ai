@@ -1,6 +1,5 @@
 package com.llm.prompt_engineering;
 
-import com.llm.chats.PromptController;
 import com.llm.dto.UserInput;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -8,6 +7,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 public class TravelAssistantController {
@@ -22,8 +23,8 @@ public class TravelAssistantController {
     private static final Logger log = LoggerFactory.getLogger(TravelAssistantController.class);
     private final ChatClient chatClient;
 
-    @Value("classpath:/prompt-templates/01_travel_prompt.st")
-    private Resource systemTemplateMessage;
+    @Value("classpath:/prompt-templates/travel_prompt.st")
+    private Resource travelPromptMessage;
 
     public TravelAssistantController(ChatClient.Builder chatClientBuilder) {
         this.chatClient = chatClientBuilder.build();
@@ -39,8 +40,30 @@ public class TravelAssistantController {
                         new UserMessage(userInput.prompt())
                 )
         );
-
         var requestSpec = chatClient.prompt(promptMessage);
+
+        var responseSpec = requestSpec.call();
+        log.info("responseSpec : {} ", responseSpec.chatResponse());
+        return responseSpec.content();
+    }
+
+    @PostMapping("/v2/travel_assistant")
+    public String promptsv2(@RequestBody UserInput userInput) {
+        log.info("userInput : {} ", userInput);
+
+        var systemMessage = """
+                You are a professional travel planner with extensive knowledge of worldwide destinations,
+                including cultural attractions, accommodations, and travel logistics.
+                Provide better lodging options too that supports the family.
+                
+                """;
+
+        var promptMessage = new Prompt(
+                new SystemMessage(systemMessage), // Sets the role
+                new UserMessage(userInput.prompt()) // Sets the context and task
+        );
+        var requestSpec = chatClient.prompt(promptMessage);
+
 
         var responseSpec = requestSpec.call();
         log.info("responseSpec : {} ", responseSpec.chatResponse());
