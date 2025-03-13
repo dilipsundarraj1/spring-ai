@@ -100,7 +100,7 @@ spring:
                         new UserMessage(userInput.prompt())));
 ```
 
-- Check the [PromptController](src/main/java/com/llm/prompts/PromptController.java)
+- Check the [PromptController](src/main/java/com/llm/prompt_engineering/PromptController.java)
 
 ### Building User and System Messages using Prompt and StringTemplate class - Approach 1
 
@@ -119,12 +119,12 @@ var promptMessage = new Prompt(
 
 ```
 
-- Check the [PromptController](src/main/java/com/llm/prompts/PromptController.java)
+- Check the [PromptController](src/main/java/com/llm/prompt_engineering/PromptController.java)
 
 
 ### Building User and System Messages using Prompt class, StringTemplate - Approach 2 
 
-- Check the [CodingAssistantController](src/main/java/com/llm/prompts/CodingAssistantController.java)
+- Check the [CodingAssistantController](src/main/java/com/llm/prompt_engineering/CodingAssistantController.java)
 
 ```java
     @Value("classpath:/prompt-templates/coding-assistant.st")
