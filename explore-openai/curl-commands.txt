@@ -7,6 +7,20 @@ curl -i \
 -H "Content-Type: application/json" \
 -X POST http://localhost:8080/chats
 
+--------------
+chats/stream: |
+--------------
+
+curl --request POST \
+  --url http://localhost:8080/springai/v2/chats/stream \
+  --header 'Content-Type: application/json' \
+  --data '{
+	"prompt": "Build a rest client in Java",
+		"chatOptions": {
+	"temperature": 1.0,
+		"maxTokens" : 500
+}
+}'
 
 -------
 prompts: |

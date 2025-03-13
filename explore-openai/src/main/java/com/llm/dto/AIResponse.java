@@ -1,4 +1,4 @@
 package com.llm.dto;
 
-public record AIResponse(String answer) {
+public record AIResponse(String content) {
 }
