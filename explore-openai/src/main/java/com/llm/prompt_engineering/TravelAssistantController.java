@@ -55,15 +55,18 @@ public class TravelAssistantController {
                 You are a professional travel planner with extensive knowledge of worldwide destinations,
                 including cultural attractions, accommodations, and travel logistics.
                 Provide better lodging options too that supports the family.
-                
                 """;
+
+        PromptTemplate promptTemplate = new PromptTemplate(travelPromptMessage);
+        var message = promptTemplate.createMessage(Map.of("context", userInput.context(), "input", userInput.prompt()));
 
         var promptMessage = new Prompt(
                 new SystemMessage(systemMessage), // Sets the role
-                new UserMessage(userInput.prompt()) // Sets the context and task
-        );
-        var requestSpec = chatClient.prompt(promptMessage);
+                message
+                );
 
+        log.info("promptMessage : {} ", promptMessage);
+        var requestSpec = chatClient.prompt(promptMessage);
 
         var responseSpec = requestSpec.call();
         log.info("responseSpec : {} ", responseSpec.chatResponse());
