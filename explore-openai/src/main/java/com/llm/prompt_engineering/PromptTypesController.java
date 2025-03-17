@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.chat.prompt.SystemPromptTemplate;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
@@ -26,8 +27,14 @@ public class PromptTypesController {
         this.chatClient = chatClientBuilder.build();
     }
 
-    @Value("classpath:/prompt-templates/few_shot.st")
+    @Value("classpath:/prompt-templates/prompt_types/few_shot.st")
     private Resource fewShotPrompt;
+
+    @Value("classpath:/prompt-templates/prompt_types/multi_step_prompt_1.st")
+    private Resource multiStep1;
+
+    @Value("classpath:/prompt-templates/prompt_types/multi_step_prompt_2.st")
+    private Resource multiStep2;
 
 
     @PostMapping("/v1/prompt_types/zero_shot")
@@ -92,6 +99,23 @@ public class PromptTypesController {
                 List.of(
                         new UserMessage(userInput.prompt())
                 )
+        );
+        var requestSpec = chatClient.prompt(promptMessage);
+
+        var responseSpec = requestSpec.call();
+        log.info("responseSpec : {} ", responseSpec.chatResponse());
+        return responseSpec.content();
+    }
+
+    @PostMapping("/v1/prompt_types/multi_step")
+    public String multistep_1(@RequestBody UserInput userInput) {
+        log.info("userInput : {} ", userInput);
+//        PromptTemplate promptTemplate = new PromptTemplate(multiStep1);
+        PromptTemplate promptTemplate = new PromptTemplate(multiStep2);
+        var message = promptTemplate.createMessage(Map.of("input", userInput.prompt()));
+        log.info("prompt : {} ",message.getText());
+        var promptMessage = new Prompt(
+                List.of(message)
         );
         var requestSpec = chatClient.prompt(promptMessage);
 
