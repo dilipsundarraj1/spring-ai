@@ -83,4 +83,20 @@ public class PromptTypesController {
         log.info("responseSpec : {} ", responseSpec.chatResponse());
         return responseSpec.content();
     }
+
+    @PostMapping("/v1/prompt_types/cot")
+    public String cot(@RequestBody UserInput userInput) {
+        log.info("userInput : {} ", userInput);
+
+        var promptMessage = new Prompt(
+                List.of(
+                        new UserMessage(userInput.prompt())
+                )
+        );
+        var requestSpec = chatClient.prompt(promptMessage);
+
+        var responseSpec = requestSpec.call();
+        log.info("responseSpec : {} ", responseSpec.chatResponse());
+        return responseSpec.content();
+    }
 }
