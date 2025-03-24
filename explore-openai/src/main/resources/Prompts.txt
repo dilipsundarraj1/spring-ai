@@ -25,10 +25,103 @@ Zero Shot Prompts: |
     "prompt": "The product arrived on time, but it was damaged and didn’t work. \n\n What is the sentiment of this sentence?"
 }
 
-
+=================================================================================================================================================================================================================
 ==================
 Few Shot Prompts: |
 ==================
 
-happy
-unhappy
+{
+    "prompt": "The product arrived on time, but it was damaged and didn’t work."
+}
+
+{
+    "prompt": "The product arrived on time, but it was damaged and didn’t work. \n\n What is the sentiment of this sentence?"
+}
+
+
+
+=================================================================================================================================================================================================================
+==================
+Multi Step Prompts: |
+==================
+
+{
+    "prompt": "Peter is a software engineer living in France with his wife, two daughters, and their beloved dog. He deeply values family time, often enjoying weekends filled with laughter and activities with his loved ones.In addition to being a devoted family man, Pierre has a passion for soccer and plays regularly in his free time. Balancing work and play, he cherishes every moment spent both on the field and at home, where his heart truly belongs."
+}
+
+{
+    "prompt": "John is a 34-year-old architect living in London. He has been working in the field for over 10 years and specializes in sustainable building designs.John is married to Sarah, and they have a son named Liam. In his free time, he enjoys hiking, reading books about history, and volunteering at a local community center.John is passionate about making a positive impact on the environment through his work.."
+}
+
+=================================================================================================================================================================================================================
+====================
+Structured Outputs: |
+====================
+Prompt Engineering :
+======================
+{
+	"prompt": "Extract the key information from the following text delimited by triple backticks and format it in JSON.\n Text : ```Max is 30 years old```"
+}
+
+{
+	"prompt": "Extract the key information from the following text delimited by triple backticks and format it in JSON.\n Text : ```Emily Thompson booked a flight on October 10, 2024. She will be flying from New York (JFK) to Los Angeles (LAX) on flight number AA123.The departure time is 8:00 AM, and the arrival time is 11:30 AM. She has a carry-on bag and a checked bag. Her ticket price was $450.00, and she will be seated in 14A.```"
+}
+
+Prompt Engineering using FewShot & Using entity() function call:
+==================================================================
+{
+	"prompt": "Emily Thompson booked a flight on October 10, 2024. She will be flying from New York (JFK) to Los Angeles (LAX) on flight number AA123.The departure time is 8:00 AM, and the arrival time is 11:30 AM. She has a carry-on bag and a checked bag. Her ticket price was $450.00, and she will be seated in 14A."
+}
+
+{
+	"prompt": "Li Wei booked a flight on November 5, 2024. He will be flying from Beijing (PEK) to Shanghai (PVG) on flight number CA456.The departure time is 10:00 AM, and the arrival time is 12:30 PM. He has a carry-on bag and one checked bag.His ticket price was ¥3,200.00, and he will be seated in 22C."
+}
+
+
+Failure:
+========
+{
+	"prompt": "John Doe placed an order on September 20, 2024, for 2 items:A pair of Wireless Headphones costing $99.99 and a Laptop Stand priced at $29.99.The order was shipped to 123 Elm Street, Springfield, IL, and was expected to be delivered by September 25, 2024."
+}
+
+List Structured Output:
+======================
+{
+	"prompt": "Can you tell me the top 10 soccer teams in the world and the players in each team?"
+}
+
+{
+	"prompt": "Can you tell me the top 10 soccer international teams in the world and list all the players in each team?"
+}
+
+{
+	"prompt": "Can you tell me the top 10 soccer international teams in the world and list all 11 the players in each team?"
+}
+
+Failure:
+========
+{
+    "prompt": "Generate the code to sort a list of numbers in ascending order."
+}
+
+Map Structured Output:
+======================
+{
+	"prompt": "Can you tell me the top 10 soccer teams in the world and the players in each team?"
+}
+
+{
+	"prompt": "Can you tell me the top 10 soccer international teams in the world and list all the players in each team?"
+}
+
+{
+	"prompt": "Can you tell me the top 10 soccer international teams in the world and list all 11 the players in each team?"
+}
+
+Failure:
+========
+{
+    "prompt": "Generate the code to sort a list of numbers in ascending order."
+}
+
+

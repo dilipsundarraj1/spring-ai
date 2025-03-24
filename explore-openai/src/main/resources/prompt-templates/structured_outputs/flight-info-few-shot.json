@@ -1,0 +1,22 @@
+{
+  "name": "John Doe",
+  "booking_date": "January 11, 2024",
+  "flight_info": {
+    "flight_number": "123",
+    "origin_airport_code": "JFK",
+    "origin_city": "New York",
+    "destination_airport_code": "LAX",
+    "destination_city": "Los Angeles",
+    "departure_time": "8:00 AM",
+    "arrival_time": "11:30 AM"
+  },
+  "luggage": {
+    "carry_on": "1",
+    "checked_bag": "1"
+  },
+  "ticket_price": {
+    "value": "450.00",
+    "currency": "DOLLAR"
+  },
+  "seat_number": "14A"
+}
