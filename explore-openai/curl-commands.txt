@@ -121,6 +121,14 @@ curl -i \
 -H "Content-Type: application/json" \
 -X POST http://localhost:8080/cities
 
+-----------------
+Currency Converter |
+-----------------
+
+curl --request GET \
+            --url 'http://localhost:8080/springai/api/currency/latest?base=USD&symbols=GBP,EUR,AED,CAD,IND' \
+            --header 'accept: application/json'
+
 
 -----------------
 Chat with Memory |
@@ -140,3 +148,4 @@ curl -i \
 -d '{"prompt":"Whats my name"}' \
 -H "Content-Type: application/json" \
 -X POST http://localhost:8080/api/memory/chats/xyz
+

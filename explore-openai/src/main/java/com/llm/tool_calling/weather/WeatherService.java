@@ -1,4 +1,4 @@
-package com.llm.function_calling.weather;
+package com.llm.tool_calling.weather;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,12 +26,17 @@ public class WeatherService implements Function<WeatherService.Request, WeatherS
     @Override
     public Response apply(Request weatherRequest) {
         log.info("Weather Request: {}",weatherRequest);
-        Response response = restClient.get()
-                .uri("/current.json?key={key}&q={q}", weatherProps.apiKey(), weatherRequest.city())
-                .retrieve()
-                .body(Response.class);
-        log.info("Weather API Response: {}", response);
-        return response;
+        try {
+            Response response = restClient.get()
+                    .uri("/current.json?key={key}&q={q}", weatherProps.apiKey(), weatherRequest.city())
+                    .retrieve()
+                    .body(Response.class);
+            log.info("Weather API Response: {}", response);
+            return response;
+        }catch (Exception e){
+            log.error("Error occurred while fetching weather data: {} ",e.getMessage(),  e);
+            throw e;
+        }
     }
 
     // mapping the response of the Weather API to records. I only mapped the information I was interested in.

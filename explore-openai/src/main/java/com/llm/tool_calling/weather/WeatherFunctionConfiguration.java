@@ -1,4 +1,4 @@
-package com.llm.function_calling.weather;
+package com.llm.tool_calling.weather;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -7,11 +7,11 @@ import org.springframework.context.annotation.Description;
 import java.util.function.Function;
 
 @Configuration
-public class FunctionConfiguration {
+public class WeatherFunctionConfiguration {
 
     private final WeatherConfigProperties props;
 
-    public FunctionConfiguration(WeatherConfigProperties props) {
+    public WeatherFunctionConfiguration(WeatherConfigProperties props) {
         this.props = props;
     }
 

@@ -1,4 +1,4 @@
-package com.llm.function_calling.weather;
+package com.llm.tool_calling.weather;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
