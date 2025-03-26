@@ -1,5 +1,7 @@
 package com.llm.tool_calling.currency;
 
+import com.llm.tool_calling.currency.dtos.CurrencyRequest;
+import com.llm.tool_calling.currency.dtos.CurrencyResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.annotation.Tool;

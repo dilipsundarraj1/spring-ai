@@ -1,5 +1,7 @@
 package com.llm.tool_calling.weather;
 
+import com.llm.tool_calling.weather.dtos.WeatherRequest;
+import com.llm.tool_calling.weather.dtos.WeatherResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.client.RestClient;
@@ -10,13 +12,13 @@ import java.util.function.Function;
    Weather API
    https://www.weatherapi.com/api-explorer.aspx
  */
-public class WeatherService implements Function<WeatherService.Request, WeatherService.Response> {
+public class WeatherToolsFunction implements Function<WeatherRequest, WeatherResponse> {
 
-    private static final Logger log = LoggerFactory.getLogger(WeatherService.class);
+    private static final Logger log = LoggerFactory.getLogger(WeatherToolsFunction.class);
     private final RestClient restClient;
     private final WeatherConfigProperties weatherProps;
 
-    public WeatherService(WeatherConfigProperties props) {
+    public WeatherToolsFunction(WeatherConfigProperties props) {
         this.weatherProps = props;
         log.debug("Weather API URL: {}", weatherProps.apiUrl());
         log.debug("Weather API Key: {}", weatherProps.apiKey());
@@ -24,13 +26,13 @@ public class WeatherService implements Function<WeatherService.Request, WeatherS
     }
 
     @Override
-    public Response apply(Request weatherRequest) {
+    public WeatherResponse apply(WeatherRequest weatherRequest) {
         log.info("Weather Request: {}",weatherRequest);
         try {
-            Response response = restClient.get()
+            WeatherResponse response = restClient.get()
                     .uri("/current.json?key={key}&q={q}", weatherProps.apiKey(), weatherRequest.city())
                     .retrieve()
-                    .body(Response.class);
+                    .body(WeatherResponse.class);
             log.info("Weather API Response: {}", response);
             return response;
         }catch (Exception e){
@@ -38,12 +40,4 @@ public class WeatherService implements Function<WeatherService.Request, WeatherS
             throw e;
         }
     }
-
-    // mapping the response of the Weather API to records. I only mapped the information I was interested in.
-    public record Request(String city) {}
-    public record Response(Location location,Current current) {}
-    public record Location(String name, String region, String country, Long lat, Long lon){}
-    public record Current(String temp_f, Condition condition, String wind_mph, String humidity) {}
-    public record Condition(String text){}
-
 }

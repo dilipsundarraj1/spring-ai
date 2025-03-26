@@ -1,5 +1,7 @@
 package com.llm.tool_calling.currency;
 
+import com.llm.tool_calling.currency.dtos.CurrencyRequest;
+import com.llm.tool_calling.currency.dtos.CurrencyResponse;
 import org.springframework.web.bind.annotation.*;
 
 @RestController

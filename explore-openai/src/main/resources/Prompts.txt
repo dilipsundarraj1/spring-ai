@@ -124,4 +124,30 @@ Failure:
     "prompt": "Generate the code to sort a list of numbers in ascending order."
 }
 
+=================================================================================================================================================================================================================
 
+=============
+Tool Calling: |
+=============
+
+{
+    "prompt": "What's the Current time"
+}
+
+{
+    "prompt": "What's the Current time in New york ?"
+}
+
+
+{
+    "prompt": "What's the Current time in Paris, France?"
+}
+
+{
+	"prompt": "What's the weather in NewYork city?"
+}
+
+
+{
+    "prompt": "Whats the current weather in NewDelhi, India?"
+}

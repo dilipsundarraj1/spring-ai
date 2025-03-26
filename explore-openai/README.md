@@ -371,7 +371,7 @@ spring:
     }
 ```
 
-- Check **Chat with Memory** section in the [curl-commands](../explore-openai/curl-commands.txt) file for commands to test this.
+- Check **Chat with Memory** section in the [curl-commands](src/main/resources/curl-commands.txt) file for commands to test this.
 
 ## Logger Advisor
 
