@@ -4,6 +4,7 @@ import com.llm.tool_calling.currency.dtos.CurrencyRequest;
 import com.llm.tool_calling.currency.dtos.CurrencyResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
@@ -21,9 +22,17 @@ public class CurrencyTools {
         this.restClient = RestClient.create(currencyExchangeConfigProperties.baseUrl());
     }
 
-    @Tool(description = "Fetch the latest currency exchange rates")
-    public CurrencyResponse getCurrencyRates(CurrencyRequest request) {
+//    @Tool(description = "Fetch the latest currency exchange rates",
+//    returnDirect = true)
+    @Tool(description = "Fetch the latest currency exchange rates. For multiple currency conversion use comma separated values for symbols",
+    returnDirect = true)
+    public CurrencyResponse getCurrencyRates(CurrencyRequest request,
+                                             ToolContext toolContext) {
         log.info("RestClient CurrencyTools is invoked - getCurrencyRates: {}", request);
+        if(toolContext!=null){
+            var userId = toolContext.getContext().get("userId");
+            log.info("userId: {}", userId);
+        }
 
         try {
             var response = restClient.get()

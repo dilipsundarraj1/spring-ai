@@ -142,6 +142,24 @@ Tool Calling: |
 {
     "prompt": "What's the Current time in Paris, France?"
 }
+==========
+Currency: |
+==========
+{
+	"prompt": "What is the currency exchange rate of US dollar to Australian dollar?"
+}
+
+{
+	"prompt": "What is the currency exchange rate of US dollar to Australian and Indian Currency?"
+}
+
+{
+	"prompt": "What is the currency exchange rate of US dollar to Australian, Indian and Dubai Currency?"
+}
+
+==========
+Weather: |
+==========
 
 {
 	"prompt": "What's the weather in NewYork city?"

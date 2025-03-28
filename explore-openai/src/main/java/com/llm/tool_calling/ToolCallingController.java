@@ -25,6 +25,7 @@ import org.springframework.util.ReflectionUtils;
 import org.springframework.web.bind.annotation.*;
 
 import java.lang.reflect.Method;
+import java.util.Map;
 
 @RestController
 public class ToolCallingController {
@@ -49,14 +50,15 @@ public class ToolCallingController {
                 .build();
         this.chatClient = builder
                 .defaultSystem("You are a helpful AI Assistant that can access tools if needed to answer user questions!.")
-//                .defaultTools(toolCallback)
-                .defaultTools("currentWeatherFunction")
+                .defaultTools(toolCallback)
+//                .defaultTools("currentWeatherFunction")
                 .build();
         this.openAiChatModel = openAiChatModel;
     }
 
     @PostMapping("/v1/tool_calling")
-    public String toolCalling(@RequestBody UserInput userInput) {
+    public String toolCalling(@RequestBody UserInput userInput,
+                              @RequestHeader(value = "USER_ID", required = false, defaultValue = "") String userId) {
         ToolCallback[] tools = ToolCallbacks.from(
                 new DateTimeTools()
                 , currencyTools
@@ -77,6 +79,7 @@ public class ToolCallingController {
 //                .tools(new DateTimeTools())
 //                .tools(toolCallback)
                 .tools(tools)
+                .toolContext(Map.of("userId", userId))
                 .call()
                 .content();
     }
