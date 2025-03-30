@@ -169,3 +169,18 @@ Weather: |
 {
     "prompt": "Whats the current weather in NewDelhi, India?"
 }
+=================================================================================================================================================================================================================
+
+====
+RAG |
+====
+{
+    "prompt": "What were the top programming trends in 2025?"
+}
+
+{
+    "prompt": "What is the return policy for the electronics ?"
+}
+
+
+

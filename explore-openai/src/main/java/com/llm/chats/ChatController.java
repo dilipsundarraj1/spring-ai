@@ -42,8 +42,8 @@ public class ChatController {
         var responseSpec = requestSpec.call();
         log.info("responseSpec1 : {} ", responseSpec);
         log.info("content : {} ", responseSpec.content());
-//        return new AIResponse(responseSpec.content());
-        return responseSpec.chatResponse();
+        return new AIResponse(responseSpec.content());
+//        return responseSpec.chatResponse();
     }
 
     @PostMapping("/v1/chats/entity")
