@@ -1,0 +1,123 @@
+====
+RAG |
+====
+{
+    "prompt": "What were the top programming trends in 2025?"
+}
+
+{
+    "prompt": "What is the return policy for the electronics ?"
+}
+
+================================================================================================================================================================
+==========
+Grounding |
+==========
+
+{
+    "prompt": "What are the working hours at TechNova?"
+}
+
+
+{
+    "prompt": "How many paid vacation days do employees get?"
+}
+
+{
+    "prompt": "What is the company's hybrid work policy?"
+}
+
+Failure Prompts:
+
+{
+    "prompt": "When is the next company town hall meeting?"
+}
+{
+    "prompt": "Which project is being launched next quarter?"
+}
+
+================================================================================================================================================================
+
+============
+Flexora FAQ |
+============
+
+{
+        "prompt": "How long does it take to get my Flexora order?"
+}
+
+
+{
+        "prompt": "What is the additional fees for shipping?"
+}
+
+{
+        "prompt": "How can I track my shipment?"
+}
+
+{
+        "prompt": "Why isn't my tracking number updating?"
+}
+
+
+{
+        "prompt": "Does Flexora ship to Alaska or Hawaii?"
+}
+========
+Returns |
+========
+{
+        "prompt": "What is the Flexora return policy?"
+}
+
+{
+        "prompt": "Do I have to pay for return shipping?"
+}
+
+{
+        "prompt": "Can I take an online purchase back to a Flexora store?"
+}
+
+{
+        "prompt": "How long do refunds take to show up?"
+}
+
+{
+        "prompt": "How does the trade-in program work?"
+}
+
+{
+        "prompt": "What items can I send in for trade-in?"
+}
+
+{
+        "prompt": "Are kids' clothes accepted in trade-ins?"
+}
+
+{
+        "prompt": "How long does it take to process a trade-in?"
+}
+========
+Payouts: |
+========
+
+{
+        "prompt": "When will I receive my payout?"
+}
+
+==================
+Customer Service: |
+==================
+
+{
+        "prompt": "How can I get help with my Flexora order?"
+}
+
+{
+        "prompt": "Where do I send support queries?"
+}
+
+{
+        "prompt": "I ordered something 2 weeks ago, and still no tracking update. What should I do?"
+}
+

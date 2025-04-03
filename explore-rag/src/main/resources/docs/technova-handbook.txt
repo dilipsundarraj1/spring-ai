@@ -1,0 +1,21 @@
+Welcome to TechNova Employee Handbook
+
+1. Our official working hours are from 9:00 AM to 6:00 PM, Monday to Friday.
+
+2. Employees are entitled to 20 days of paid vacation per year. Vacation days can be carried forward to the next year, up to a maximum of 5 days.
+
+3. TechNova follows a hybrid work model. Employees are expected to work from the office at least two days a week.
+
+4. The company’s official leave policy includes sick leave, parental leave, bereavement leave, and paid time off.
+
+5. If you forget your company email password, you can reset it using the self-service portal at portal.technova.com/reset-password.
+
+6. Health insurance coverage is provided through MediPlus and includes dental and vision benefits.
+
+7. Reimbursements for work-related travel should be submitted through the ExpenseTracker app within 10 days of travel completion.
+
+8. For technical support, you can raise a ticket using the internal support tool or email techsupport@technova.com.
+
+9. Company laptops must be returned to IT before your last working day if you are offboarding.
+
+10. TechNova’s core values include innovation, collaboration, integrity, and customer obsession.
