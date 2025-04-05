@@ -22,6 +22,10 @@ dependencies {
     //pg-vector
     implementation 'org.springframework.ai:spring-ai-pgvector-store-spring-boot-starter'
 
+    //flyway
+    implementation 'org.flywaydb:flyway-core'
+
+
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'

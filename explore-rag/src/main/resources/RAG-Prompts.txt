@@ -18,7 +18,6 @@ Grounding |
     "prompt": "What are the working hours at TechNova?"
 }
 
-
 {
     "prompt": "How many paid vacation days do employees get?"
 }
@@ -46,6 +45,9 @@ Flexora FAQ |
         "prompt": "How long does it take to get my Flexora order?"
 }
 
+{
+        "prompt": "Is international shipping available?"
+}
 
 {
         "prompt": "What is the additional fees for shipping?"

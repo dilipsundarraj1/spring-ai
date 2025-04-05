@@ -11,6 +11,7 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.pgvector.PgVectorStore;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
@@ -42,12 +43,14 @@ public class GroundingService {
     private Resource ragQAPrompt;
 
 
-    public GroundingService(ChatClient.Builder chatClientBuilder, PgVectorStore vectorStore) {
+    public GroundingService(ChatClient.Builder chatClientBuilder,
+//                            @Qualifier(value = "qaVectorStore") PgVectorStore vectorStore,
+                             PgVectorStore vectorStore) {
         this.chatClient = chatClientBuilder.build();
         this.vectorStore = vectorStore;
     }
 
-    public GroundingResponse getGrounding(GroundingRequest groundingRequest) {
+    public GroundingResponse grounding(GroundingRequest groundingRequest) {
         log.info("Prompt : {} ", groundingRequest.prompt());
         log.info("context : {} ", handbookContent);
         PromptTemplate promptTemplate = new PromptTemplate(ragPrompt);
@@ -60,8 +63,8 @@ public class GroundingService {
 
     public GroundingResponse retrieveAnswer(GroundingRequest groundingRequest) {
 
-
 //        var response = chatClient.prompt(groundingRequest.prompt()).call().content();
+
         var results = vectorStore.doSimilaritySearch(SearchRequest.builder()
                 .query(groundingRequest.prompt())
                 .build());
@@ -76,7 +79,7 @@ public class GroundingService {
         if (docs.isPresent()) {
             log.info("Matched Document  : {} ", docs.get());
             var context = removeExtraNewlines(Objects.requireNonNull(docs.get().getText()));
-            log.info("context : {} ",context );
+            log.info("context : {} ", context);
 
             PromptTemplate promptTemplate = new PromptTemplate(ragQAPrompt);
             var prompMessage = promptTemplate.createMessage(Map.of("input", groundingRequest.prompt(),

@@ -3,7 +3,6 @@ package com.llm.controller;
 import com.llm.dtos.GroundingRequest;
 import com.llm.dtos.GroundingResponse;
 import com.llm.service.GroundingService;
-import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -19,7 +18,7 @@ public class GroundingController {
 
     @PostMapping("/api/v1/grounding")
     public GroundingResponse getGrounding(@RequestBody GroundingRequest groundingRequest) {
-        return groundingService.getGrounding(groundingRequest);
+        return groundingService.grounding(groundingRequest);
     }
 
     @PostMapping("/api/v2/grounding")
