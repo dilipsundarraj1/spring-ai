@@ -22,16 +22,8 @@ public class VectorStoreConfig {
         return PgVectorStore.builder(jdbcTemplate, this.embeddingModel)
                 .initializeSchema(true)
                 .schemaName(PgVectorStore.DEFAULT_SCHEMA_NAME)
-                .vectorTableName("qaTableName")
+                .vectorTableName("ragdocs")
                 .build();
     }
-
-//    @Bean(name = "qaVectorStore")
-//    public VectorStore getVectorStore() {
-//        PgVectorStore.PgVectorStoreBuilder builder = PgVectorStore.builder(jdbcTemplate, embeddingModel)
-//                .vectorTableName(qaTableName);
-//        return new PgVectorStore(builder);
-//    }
-
 
 }

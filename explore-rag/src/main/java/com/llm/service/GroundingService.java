@@ -3,6 +3,7 @@ package com.llm.service;
 
 import com.llm.dtos.GroundingRequest;
 import com.llm.dtos.GroundingResponse;
+import io.micrometer.common.util.StringUtils;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,6 +24,7 @@ import java.nio.file.Paths;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 @Service
 public class GroundingService {
@@ -42,10 +44,10 @@ public class GroundingService {
     @Value("classpath:/prompt-templates/RAG-QA-Prompt.st")
     private Resource ragQAPrompt;
 
-
     public GroundingService(ChatClient.Builder chatClientBuilder,
-//                            @Qualifier(value = "qaVectorStore") PgVectorStore vectorStore,
-                             PgVectorStore vectorStore) {
+//                            PgVectorStore vectorStore
+                            @Qualifier(value = "qaVectorStore") PgVectorStore vectorStore
+                             ) {
         this.chatClient = chatClientBuilder.build();
         this.vectorStore = vectorStore;
     }
@@ -70,17 +72,15 @@ public class GroundingService {
                 .build());
 
         log.info("results size : {} \n results  : {} ", results.size(), results);
-        var docs = results
+        var context = results
                 .stream()
                 .filter(Objects::nonNull)
 //                .filter(result -> result.getScore() > 0.8)
-                .limit(1)
-                .findFirst();
-        if (docs.isPresent()) {
-            log.info("Matched Document  : {} ", docs.get());
-            var context = removeExtraNewlines(Objects.requireNonNull(docs.get().getText()));
-            log.info("context : {} ", context);
-
+                .limit(2)
+                .map(result -> result.getText())
+                .collect(Collectors.joining("\n"));
+        if (StringUtils.isNotEmpty(context)) {
+            log.info("Matched context : {} ", context);
             PromptTemplate promptTemplate = new PromptTemplate(ragQAPrompt);
             var prompMessage = promptTemplate.createMessage(Map.of("input", groundingRequest.prompt(),
                     "context", context));

@@ -19,6 +19,10 @@ dependencies {
     //pdf document reader
     implementation 'org.springframework.ai:spring-ai-pdf-document-reader'
 
+    //tika document reader
+    implementation 'org.springframework.ai:spring-ai-tika-document-reader'
+
+
     //pg-vector
     implementation 'org.springframework.ai:spring-ai-pgvector-store-spring-boot-starter'
 

@@ -26,6 +26,14 @@ Grounding |
     "prompt": "What is the company's hybrid work policy?"
 }
 
+{
+  "prompt": "How do employees submit reimbursements for work-related travel?"
+}
+
+{
+  "prompt": "How can employees reset their company email password?"
+}
+
 Failure Prompts:
 
 {
@@ -122,4 +130,74 @@ Customer Service: |
 {
         "prompt": "I ordered something 2 weeks ago, and still no tracking update. What should I do?"
 }
+
+
+=========================================================================================================================================
+
+=========================
+Paragraph Document Reader|
+=========================
+{
+    "prompt": "What is the overall format of the basketball tournament at the 2024 Olympics?"
+}
+
+{
+    "prompt": "How many teams participate in the men's and women's basketball tournaments?"
+}
+
+{
+    "prompt": "Which team won the gold medal in the men's basketball tournament?"
+}
+
+{
+    "prompt": "Who secured the bronze medal in the men's basketball tournament?"
+}
+
+{
+    "prompt": "What role does the 3x3 basketball format play in the overall tournament?"
+}
+
+{
+    "prompt": "How does the under-23 rule affect the men's soccer tournament at the Olympics?"
+}
+
+{
+    "prompt": "What are the differences in team compositions between the men’s and women’s soccer tournaments?"
+}
+
+{
+    "prompt": "Which country won the gold medal in the men’s soccer tournament?"
+}
+
+{
+    "prompt": "Who claimed the bronze medal in the men’s soccer tournament?"
+}
+
+{
+    "prompt": "Which French cities are set to host the soccer matches?"
+}
+================================================================================================================================================================
+=====================================
+Word Document ("TikaDocumentReader") |
+=====================================
+{"prompt": "What is Generative AI and how does it create new content?" }
+
+{"prompt": "Which core models are commonly used in Generative AI systems?" }
+
+{"prompt": "How do GANs and VAEs differ in their approach to generating content?" }
+
+{"prompt": "What role do transformer models play in generative AI applications?" }
+
+{"prompt": "What are the ethical concerns associated with Generative AI?" }
+
+{"prompt": "In which industries is Generative AI currently being applied?" }
+
+{"prompt": "How is Generative AI used in the healthcare sector?" }
+
+{"prompt": "What are some practical business use cases for Generative AI?" }
+================================================================================================================================================================
+
+
+
+
 
