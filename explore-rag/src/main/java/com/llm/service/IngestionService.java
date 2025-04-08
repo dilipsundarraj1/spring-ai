@@ -117,6 +117,8 @@ public class IngestionService implements CommandLineRunner {
         return switch (ingestType){
             case "token" -> {
                 TokenTextSplitter splitter = new TokenTextSplitter();
+//                TokenTextSplitter splitter = new TokenTextSplitter(1000, 400, 10, 5000, true);
+
                 yield splitter.apply(docs);
             }
             default -> docs;
