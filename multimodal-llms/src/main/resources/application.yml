@@ -1,0 +1,14 @@
+server:
+  port: 8085
+  servlet:
+    context-path: /springai
+spring:
+  ai:
+    openai:
+      api-key: ${OPENAI_KEY}
+      chat:
+        enabled: true # By default its true, this triggers the autoconfiguration.
+        options:
+          model: gpt-4o
+          temperature: 1.0
+          max_completion_tokens: 2000
