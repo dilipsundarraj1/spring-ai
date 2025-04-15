@@ -11,8 +11,8 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
 
     //ai-starters
-    implementation 'org.springframework.ai:spring-ai-ollama-spring-boot-starter'
-    implementation 'org.springframework.ai:spring-ai-openai-spring-boot-starter'
+    implementation("org.springframework.ai:spring-ai-starter-model-ollama")
+    implementation("org.springframework.ai:spring-ai-starter-model-openai")
 
     // input validation
     implementation 'org.springframework.boot:spring-boot-starter-validation'

@@ -9,8 +9,7 @@ version = '0.0.1-SNAPSHOT'
 
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
-    implementation 'org.springframework.ai:spring-ai-openai-spring-boot-starter'
-    implementation 'org.springframework.ai:spring-ai-openai'
+    implementation("org.springframework.ai:spring-ai-starter-model-ollama")
 
 
     implementation 'org.springframework.boot:spring-boot-starter-validation'
