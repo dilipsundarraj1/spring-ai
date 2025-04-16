@@ -12,3 +12,11 @@ spring:
           model: gpt-4o
           temperature: 1.0
           max_completion_tokens: 2000
+      image:
+        api-key: ${OPENAI_KEY}
+        enabled: true
+        options:
+          quality: "hd"
+          n: 1
+          height: 1024
+          width: 1024
