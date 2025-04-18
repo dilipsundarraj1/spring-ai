@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.ResponseEntity;
+import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.web.bind.annotation.*;
@@ -30,9 +31,8 @@ public class ChatController {
     public Object chat(@RequestBody @Valid UserInput userInput) {
 
         log.info("userInput message : {} ", userInput);
-        //customChatClient(userInput);
         var requestSpec = chatClient.prompt()
-//                .functions("timeFunction")
+                .advisors(new SimpleLoggerAdvisor())
                 .user(userInput.prompt())
                 //.system("You are a helpful assistant")
                 ;
@@ -42,8 +42,8 @@ public class ChatController {
         var responseSpec = requestSpec.call();
         log.info("responseSpec1 : {} ", responseSpec);
         log.info("content : {} ", responseSpec.content());
-        return new AIResponse(responseSpec.content());
-//        return responseSpec.chatResponse();
+//        return new AIResponse(responseSpec.content());
+        return responseSpec.chatResponse();
     }
 
     @PostMapping("/v1/chats/entity")

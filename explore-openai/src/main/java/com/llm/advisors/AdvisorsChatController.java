@@ -1,19 +1,14 @@
 package com.llm.advisors;
 
-import com.fasterxml.jackson.annotation.JsonAlias;
-import com.llm.dto.AIResponse;
 import com.llm.dto.UserInput;
-import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
-import org.springframework.ai.model.ModelOptionsUtils;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
-import reactor.core.publisher.Flux;
 
 @RestController
 public class AdvisorsChatController {
@@ -44,5 +39,25 @@ public class AdvisorsChatController {
         log.info("responseSpec : {} ", responseSpec);
         return responseSpec.content();
     }
+
+    @PostMapping("/v1/advisors/custom")
+    public String customAdvisors(@RequestBody UserInput userInput) {
+
+        var systemMessage = """
+                You are a helpful assistant, who can answer java based questions.
+                For any other questions, please respond with I don't know in a funny way!
+                """;
+
+        var responseSpec = chatClient
+                .prompt()
+                .advisors(new CustomAdvisor())
+                .user(userInput.prompt())
+                .system(systemMessage)
+                .call();
+
+        log.info("responseSpec : {} ", responseSpec);
+        return responseSpec.content();
+    }
+
 
 }
