@@ -31,7 +31,6 @@ public class AdvisorsChatController {
 
         var responseSpec = chatClient
                 .prompt()
-                .advisors(new SimpleLoggerAdvisor())
                 .user(userInput.prompt())
                 .system(systemMessage)
                 .call();
@@ -39,25 +38,5 @@ public class AdvisorsChatController {
         log.info("responseSpec : {} ", responseSpec);
         return responseSpec.content();
     }
-
-    @PostMapping("/v1/advisors/custom")
-    public String customAdvisors(@RequestBody UserInput userInput) {
-
-        var systemMessage = """
-                You are a helpful assistant, who can answer java based questions.
-                For any other questions, please respond with I don't know in a funny way!
-                """;
-
-        var responseSpec = chatClient
-                .prompt()
-                .advisors(new CustomAdvisor())
-                .user(userInput.prompt())
-                .system(systemMessage)
-                .call();
-
-        log.info("responseSpec : {} ", responseSpec);
-        return responseSpec.content();
-    }
-
 
 }

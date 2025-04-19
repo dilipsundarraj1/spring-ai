@@ -27,9 +27,6 @@ public class PromptTypesController {
         this.chatClient = chatClientBuilder.build();
     }
 
-    @Value("classpath:/prompt-templates/prompt_types/few_shot.st")
-    private Resource fewShotPrompt;
-
     @Value("classpath:/prompt-templates/prompt_types/multi_step_prompt_1.st")
     private Resource multiStep1;
 
@@ -75,15 +72,12 @@ public class PromptTypesController {
                 
                 """;
 
-        SystemPromptTemplate systemPromptTemplate = new SystemPromptTemplate(fewShotPrompt);
-        var systemMessage = systemPromptTemplate.createMessage(Map.of("few_shot_prompts", fewShotExamples));
-
         var promptMessage = new Prompt(
                 List.of(
-                        systemMessage,
                         new UserMessage(userInput.prompt())
                 )
         );
+
         var requestSpec = chatClient.prompt(promptMessage);
 
         var responseSpec = requestSpec.call();
@@ -110,8 +104,8 @@ public class PromptTypesController {
     @PostMapping("/v1/prompt_types/multi_step")
     public String multistep_1(@RequestBody UserInput userInput) {
         log.info("userInput : {} ", userInput);
-//        PromptTemplate promptTemplate = new PromptTemplate(multiStep1);
-        PromptTemplate promptTemplate = new PromptTemplate(multiStep2);
+        PromptTemplate promptTemplate = new PromptTemplate(multiStep1);
+//        PromptTemplate promptTemplate = new PromptTemplate(multiStep2);
         var message = promptTemplate.createMessage(Map.of("input", userInput.prompt()));
         log.info("prompt : {} ",message.getText());
         var promptMessage = new Prompt(

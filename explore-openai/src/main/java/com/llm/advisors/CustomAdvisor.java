@@ -29,11 +29,12 @@ import java.util.regex.Pattern;
  * 2. Enhances responses with processing time metadata
  * 3. Tracks performance metrics
  */
-public class CustomAdvisor implements CallAroundAdvisor {
+//public class CustomAdvisor implements CallAroundAdvisor {
+public class CustomAdvisor {
     private static final Logger log = LoggerFactory.getLogger(CustomAdvisor.class);
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-    @Override
+//    @Override
     public AdvisedResponse aroundCall(AdvisedRequest advisedRequest, CallAroundAdvisorChain chain) {
         // 1. Capture start time for performance tracking
         Instant startTime = Instant.now();
@@ -117,12 +118,12 @@ public class CustomAdvisor implements CallAroundAdvisor {
         return enhancedResponse;
     }
 
-    @Override
+//    @Override
     public String getName() {
         return "EnhancedCustomAdvisor";
     }
 
-    @Override
+//    @Override
     public int getOrder() {
         return 0;
     }
