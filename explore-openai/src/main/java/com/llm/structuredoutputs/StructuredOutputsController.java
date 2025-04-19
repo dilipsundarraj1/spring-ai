@@ -1,7 +1,6 @@
 package com.llm.structuredoutputs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.llm.chats.ChatController;
 import com.llm.dto.flight.FlightBooking;
 import com.llm.dto.UserInput;
 import com.llm.dto.soccer.SoccerTeam;
@@ -27,7 +26,7 @@ import java.util.Map;
 @RestController
 public class StructuredOutputsController {
 
-    private static final Logger log = LoggerFactory.getLogger(ChatController.class);
+    private static final Logger log = LoggerFactory.getLogger(StructuredOutputsController.class);
 
     private final ChatClient chatClient;
 
