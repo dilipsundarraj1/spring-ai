@@ -11,16 +11,5 @@ import java.util.function.Function;
 @Configuration(proxyBeanMethods = false)
 public class WeatherToolsConfiguration {
 
-    private final WeatherConfigProperties props;
-
-    public WeatherToolsConfiguration(WeatherConfigProperties props) {
-        this.props = props;
-    }
-
-    @Bean
-    @Description("Get the current weather conditions for the given city.")
-    public Function<WeatherRequest, WeatherResponse> currentWeatherFunction() {
-        return new WeatherToolsFunction(props);
-    }
 
 }

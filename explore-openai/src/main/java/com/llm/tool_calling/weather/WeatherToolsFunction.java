@@ -12,7 +12,7 @@ import java.util.function.Function;
    Weather API
    https://www.weatherapi.com/api-explorer.aspx
  */
-public class WeatherToolsFunction implements Function<WeatherRequest, WeatherResponse> {
+public class WeatherToolsFunction {
 
     private static final Logger log = LoggerFactory.getLogger(WeatherToolsFunction.class);
     private final RestClient restClient;
@@ -25,19 +25,4 @@ public class WeatherToolsFunction implements Function<WeatherRequest, WeatherRes
         this.restClient = RestClient.create(weatherProps.apiUrl());
     }
 
-    @Override
-    public WeatherResponse apply(WeatherRequest weatherRequest) {
-        log.info("Weather Request: {}",weatherRequest);
-        try {
-            WeatherResponse response = restClient.get()
-                    .uri("/current.json?key={key}&q={q}", weatherProps.apiKey(), weatherRequest.city())
-                    .retrieve()
-                    .body(WeatherResponse.class);
-            log.info("Weather API Response: {}", response);
-            return response;
-        }catch (Exception e){
-            log.error("Error occurred while fetching weather data: {} ",e.getMessage(),  e);
-            throw e;
-        }
-    }
 }
