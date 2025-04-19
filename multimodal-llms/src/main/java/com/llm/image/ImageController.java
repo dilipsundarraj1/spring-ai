@@ -1,6 +1,5 @@
 package com.llm.image;
 
-import com.llm.chats.ChatController;
 import com.llm.dto.ImageInput;
 import com.llm.dto.UserInput;
 import org.apache.commons.lang3.StringUtils;
@@ -22,7 +21,7 @@ import static com.llm.utils.ImageUtil.saveImageToFile;
  */
 @RestController
 public class ImageController {
-    private static final Logger log = LoggerFactory.getLogger(ChatController.class);
+    private static final Logger log = LoggerFactory.getLogger(ImageController.class);
     public OpenAiImageModel openAiImageModel;
     public ImageController(OpenAiImageModel openAiImageModel) {
         this.openAiImageModel = openAiImageModel;

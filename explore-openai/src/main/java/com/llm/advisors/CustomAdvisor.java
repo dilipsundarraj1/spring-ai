@@ -107,9 +107,6 @@ public class CustomAdvisor implements CallAroundAdvisor {
                 .metadata(Objects.requireNonNull(chatResponse).getMetadata())
                 .build();
 
-        // Create a new response with our enhanced content
-        // Use the proper method to build an AdvisedResponse with modified content
-
 
         var enhancedResponse =  AdvisedResponse.builder()
                 .response(newchatResponse)
