@@ -18,6 +18,6 @@ public class CurrencyController {
     @GetMapping("/latest")
     public CurrencyResponse getCurrencyRates(@RequestParam String base, @RequestParam String symbols) {
         CurrencyRequest request = new CurrencyRequest(base, symbols);
-        return currencyService.getCurrencyRates(request, null);
+        return null;
     }
 }

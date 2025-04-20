@@ -16,20 +16,20 @@ spring:
           model: gpt-4o
           temperature: 1.0
           max_completion_tokens: 2000
-    vectorstore:
-      pgvector:
-        initialize-schema: true
-  datasource:
-    driverClassName: org.postgresql.Driver
-    url: jdbc:postgresql://localhost:5432/docs
-    username: admin
-    password: password
-    hikari:
-      minimumIdle: 1
-      maximumPoolSize: 10
-      validationQuery: SELECT 1
+#    vectorstore:
+#      pgvector:
+#        initialize-schema: true
+#  datasource:
+#    driverClassName: org.postgresql.Driver
+#    url: jdbc:postgresql://localhost:5432/docs
+#    username: admin
+#    password: password
+#    hikari:
+#      minimumIdle: 1
+#      maximumPoolSize: 10
+#      validationQuery: SELECT 1
 
   flyway:
     enabled: false
-ingestion:
-  enabled: false
+#ingestion:
+#  enabled: false
