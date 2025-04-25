@@ -20,3 +20,6 @@ spring:
           n: 1
           height: 1024
           width: 1024
+          model: gpt-image-1 # gpt-image-1, dall-e-2, dall-e-3
+          response-format: url # url, b64_json
+          style: natural # natural, vivid

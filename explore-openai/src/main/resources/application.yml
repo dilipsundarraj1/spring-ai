@@ -8,33 +8,10 @@ spring:
       chat:
         enabled: true # By default its true, this triggers the autoconfiguration.
         options:
-          model: gpt-4o
+          model: gpt-4.1 #gpt-4.1, gpt-4o
           temperature: 0.7
           max_completion_tokens: 2000
           internal-tool-execution-enabled: true
-      image:
-#        api-key: ${OPENAI_KEY}
-        enabled: true
-        options:
-          quality: "hd"
-          n: 1
-          height: 1024
-          width: 1024
-      audio:
-        speech:
-          enabled: true
-#          api-key: ${OPENAI_KEY}
-          options:
-            speed: 1.0
-            model: "tts-1"
-            response-format: "mp3"
-            voice: "alloy"
-        transcription:
-          enabled: true
-#          api-key: ${OPENAI_KEY}
-          options:
-            prompt: Extract text from the file.
-            response-format: JSON
 logging:
   level:
     org:
