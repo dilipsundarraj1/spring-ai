@@ -38,7 +38,15 @@ public class GlobalErrorHandler {
         var error = new Error(ex.getMessage(), LocalDateTime.now(), HttpStatus.BAD_REQUEST.toString());
         return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
     }
-    public record Error(String errorMessage, LocalDateTime timestamp, String status ){
+
+    public record Error(String errorMessage, LocalDateTime timestamp, String status) {
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<?> handleGenericException(Exception ex) {
+        log.error("Unexpected error occurred: {}", ex.getMessage(), ex);
+        var error = new Error("An unexpected error occurred. Please try again later. Details: " + ex.getMessage(), LocalDateTime.now(), HttpStatus.INTERNAL_SERVER_ERROR.toString());
+        return new ResponseEntity<>(error, HttpStatus.INTERNAL_SERVER_ERROR);
     }
 }
 
