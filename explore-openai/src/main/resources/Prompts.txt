@@ -1,3 +1,22 @@
+=========
+Stream: |
+=========
+
+curl -i -X POST \
+  --url http://localhost:8080/springai/v1/chats/stream \
+  --header 'Content-Type: application/json' \
+  --data '{
+	"prompt": "Build a rest client in Java"
+}'
+
+curl -i -X POST \
+  --url http://localhost:8080/springai/v1/chats/stream \
+  --header 'Content-Type: application/json' \
+  --data '{
+	"prompt": "Build a rest client in Java"
+}'
+
+=================================================================================================================================================================================================================
 =================
 Prompt Injection: |
 =================
