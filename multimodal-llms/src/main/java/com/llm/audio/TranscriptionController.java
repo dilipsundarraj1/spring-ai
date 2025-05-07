@@ -8,7 +8,6 @@ import org.springframework.ai.openai.OpenAiAudioTranscriptionModel;
 import org.springframework.ai.openai.OpenAiAudioTranscriptionOptions;
 import org.springframework.ai.openai.api.OpenAiAudioApi;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -29,11 +28,12 @@ public class TranscriptionController {
     public ResponseEntity<?> transcription(
             @RequestParam("file") MultipartFile file
     ) {
-
+        log.info("Transcription Initiated for file name : {} ", file.getOriginalFilename());
+        validateInput(file);
         var audioFile = file.getResource();
         AudioTranscriptionPrompt transcriptionRequest = new AudioTranscriptionPrompt(audioFile);
         var response = openAiAudioTranscriptionModel.call(transcriptionRequest);
-        log.info("AudioTranscription Result : {} ", response.getResult());
+        log.info("Transcription completed and the Result : {} ", response.getResult());
         return new ResponseEntity<>(new TranscriptionResponse(response.getResult().getOutput(), file.getOriginalFilename()), HttpStatus.OK);
     }
 

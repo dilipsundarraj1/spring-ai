@@ -13,13 +13,15 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
+import javax.validation.Valid;
+
 import static com.llm.utils.AudioUtil.writeMP3ToFile;
 
 @RestController
 public class TextToSpeechController {
 
     private static final Logger log = LoggerFactory.getLogger(TextToSpeechController.class);
-    public static String OUTPUT_PATH = "explore-openai/src/main/resources/files/audio";
+    public static String OUTPUT_PATH = "multimodal-llms/src/main/resources/files/audio";
 
     private final OpenAiAudioSpeechModel openAiAudioSpeechModel;
 
@@ -40,30 +42,14 @@ public class TextToSpeechController {
     }
 
     @PostMapping("/v2/tts")
-    public ResponseEntity<String> imagesV2(@RequestBody TTSInput ttsInput) {
+    public ResponseEntity<String> imagesV2(@RequestBody @Valid TTSInput ttsInput) {
         log.info("userInput message prompt is : {} ", ttsInput);
 
-        var model = StringUtils.isEmpty(ttsInput.model().value) ? OpenAiAudioApi.TtsModel.TTS_1.value : ttsInput.model().value;
-        OpenAiAudioApi.SpeechRequest.AudioResponseFormat responseFormat;
-        if (ttsInput.responseFormat() != null) {
-            responseFormat = StringUtils.isEmpty(ttsInput.responseFormat().value) ? OpenAiAudioApi.SpeechRequest.AudioResponseFormat.MP3 : ttsInput.responseFormat();
-        } else {
-            responseFormat = OpenAiAudioApi.SpeechRequest.AudioResponseFormat.MP3;
-        }
-        var speed  = ttsInput.speed() == 0.0 ? 1.0f : ttsInput.speed();
-        OpenAiAudioApi.SpeechRequest.Voice voice;
-        if (ttsInput.voice() != null) {
-            voice = StringUtils.isEmpty(ttsInput.voice().value) ?
-                    OpenAiAudioApi.SpeechRequest.Voice.ALLOY : ttsInput.voice();
-        } else {
-            voice = OpenAiAudioApi.SpeechRequest.Voice.ALLOY;
-        }
-
         var speechOptions = OpenAiAudioSpeechOptions.builder()
-                .speed(speed)
-                .model(model)
-                .responseFormat(responseFormat)
-                .voice(voice)
+                .speed(ttsInput.speed())
+                .model(ttsInput.model().value)
+                .responseFormat(ttsInput.responseFormat())
+                .voice(ttsInput.voice())
                 .build();
 
         log.info("speechOptions : {} ", speechOptions);
@@ -73,11 +59,11 @@ public class TextToSpeechController {
         log.info("response : {} ", response);
         byte[] responseAsBytes = response.getResult().getOutput();
 
-        var outputFilePath = String.format("%s/%s.%s", OUTPUT_PATH, ttsInput.fileName(), responseFormat.value);
+        var outputFilePath = String.format("%s/%s.%s", OUTPUT_PATH, ttsInput.fileName(), ttsInput.responseFormat());
         log.info("outputFilePath : {} ", outputFilePath);
 
 
-        writeMP3ToFile(responseAsBytes, OUTPUT_PATH + "/"+ttsInput.fileName()+"."+responseFormat.value);
+        writeMP3ToFile(responseAsBytes, OUTPUT_PATH + "/"+ttsInput.fileName()+"."+ttsInput.responseFormat().value);
 
         return ResponseEntity.ok("Audio Generated Successfully");
     }
