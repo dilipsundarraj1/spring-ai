@@ -76,7 +76,7 @@ public class ToolCallingController {
 
         return chatClient.prompt()
                 .user(userInput.prompt())
-//                .tools(new DateTimeTools())
+//               .tools(new DateTimeTools())
 //                .tools(toolCallback)
                 .tools(tools)
                 .toolContext(Map.of("userId", userId))
