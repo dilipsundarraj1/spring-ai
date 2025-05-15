@@ -48,20 +48,4 @@ public class GroundingService {
        return null;
     }
 
-
-    public static String removeExtraNewlines(String input) {
-        if (input == null || input.isEmpty()) return input;
-
-        // Replace multiple spaces with a single space
-        String cleaned = input.replaceAll("[ ]{2,}", " ");
-
-        // Replace newlines between lines that should be merged into a single paragraph
-        // This preserves paragraph breaks (i.e., double newlines)
-        cleaned = cleaned.replaceAll("(?<!\\n)\\n(?!\\n)", " ");
-
-        // Optional: Trim each line and remove extra leading/trailing whitespace
-        cleaned = cleaned.trim().replaceAll(" +", " ");
-
-        return cleaned;
-    }
 }
