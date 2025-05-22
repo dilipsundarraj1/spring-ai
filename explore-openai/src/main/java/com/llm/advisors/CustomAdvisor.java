@@ -2,8 +2,12 @@ package com.llm.advisors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.client.ChatClientRequest;
+import org.springframework.ai.chat.client.ChatClientResponse;
 import org.springframework.ai.chat.client.advisor.api.AdvisedRequest;
 import org.springframework.ai.chat.client.advisor.api.AdvisedResponse;
+import org.springframework.ai.chat.client.advisor.api.CallAdvisor;
+import org.springframework.ai.chat.client.advisor.api.CallAdvisorChain;
 import org.springframework.ai.chat.client.advisor.api.CallAroundAdvisor;
 import org.springframework.ai.chat.client.advisor.api.CallAroundAdvisorChain;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -29,7 +33,7 @@ import java.util.regex.Pattern;
  * 2. Enhances responses with processing time metadata
  * 3. Tracks performance metrics
  */
-public class CustomAdvisor implements CallAroundAdvisor {
+public class CustomAdvisor implements CallAdvisor {
     private static final Logger log = LoggerFactory.getLogger(CustomAdvisor.class);
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
@@ -125,5 +129,10 @@ public class CustomAdvisor implements CallAroundAdvisor {
     @Override
     public int getOrder() {
         return 0;
+    }
+
+    @Override
+    public ChatClientResponse adviseCall(ChatClientRequest chatClientRequest, CallAdvisorChain callAdvisorChain) {
+        return null;
     }
 }
