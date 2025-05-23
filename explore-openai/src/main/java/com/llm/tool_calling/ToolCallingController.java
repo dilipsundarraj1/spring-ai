@@ -16,8 +16,8 @@ import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.model.tool.ToolExecutionResult;
 import org.springframework.ai.openai.OpenAiChatModel;
+import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.ai.tool.ToolCallback;
-import org.springframework.ai.tool.ToolCallbacks;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.ai.tool.function.FunctionToolCallback;
 import org.springframework.ai.tool.method.MethodToolCallback;
@@ -50,7 +50,7 @@ public class ToolCallingController {
                 .build();
         this.chatClient = builder
                 .defaultSystem("You are a helpful AI Assistant that can access tools if needed to answer user questions!.")
-                .defaultTools(toolCallback)
+                .defaultToolCallbacks(toolCallback)
 //                .defaultTools("currentWeatherFunction")
                 .build();
         this.openAiChatModel = openAiChatModel;
@@ -66,7 +66,7 @@ public class ToolCallingController {
 
         Method method = ReflectionUtils.findMethod(DateTimeTools.class, "getCurrentDateTime");
         ToolCallback toolCallback = MethodToolCallback.builder()
-                .toolDefinition(ToolDefinition.builder(method)
+                .toolDefinition(ToolDefinition.builder()
                         .description("Get the current date and time in the user's timezone")
                         .build())
                 .toolMethod(method)
@@ -78,7 +78,7 @@ public class ToolCallingController {
                 .user(userInput.prompt())
 //               .tools(new DateTimeTools())
 //                .tools(toolCallback)
-                .tools(tools)
+                .toolCallbacks(tools)
                 .toolContext(Map.of("userId", userId))
                 .call()
                 .content();
