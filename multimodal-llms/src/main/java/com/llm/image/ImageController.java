@@ -2,13 +2,13 @@ package com.llm.image;
 
 import com.llm.dto.ImageInput;
 import com.llm.dto.UserInput;
-import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.image.ImagePrompt;
 import org.springframework.ai.image.ImageResponse;
 import org.springframework.ai.openai.OpenAiImageModel;
 import org.springframework.ai.openai.OpenAiImageOptions;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -45,27 +45,26 @@ public class ImageController {
         var quality = imageInput.quality()==null ? "hd" : imageInput.quality();
         var height = imageInput.height()==0 ? 1024 : imageInput.height();
         var width = imageInput.width()==0 ? 1024 : imageInput.width();
-        var model = StringUtils.isAllEmpty(imageInput.model())  ? "dall-e-3" : imageInput.model();
-        var style = StringUtils.isAllEmpty(imageInput.style())  ? "natural" : imageInput.style();
-        var responseFormat = StringUtils.isAllEmpty(imageInput.responseFormat())  ? "url" : imageInput.responseFormat();
+        var model = !StringUtils.hasText(imageInput.model())  ? "dall-e-3" : imageInput.model();
+        var style = !StringUtils.hasText(imageInput.style())  ? "natural" : imageInput.style();
+        var responseFormat = !StringUtils.hasText(imageInput.responseFormat())  ? "url" : imageInput.responseFormat();
         log.info("quality : {} , height : {} , width: {} , model : {} , style : {} ", quality, height, width, model, style);
         var response = openAiImageModel.call(
                 new ImagePrompt(imageInput.prompt(),
                         OpenAiImageOptions.builder()
                                 // Model : dall-e-3 or dall-e-2
-                                .withModel(model)
+                                .model(model)
                                 //hd or standard
-                                .withQuality(quality)
+                                .quality(quality)
                                 // The number of images to generate.
                                 // Must be between 1 and 10. For dall-e-3, only n=1 is supported.
-                                .withN(1)
                                 // Must be one of 256x256, 512x512, or 1024x1024 for dall-e-2
                                 // Must be one of 1024x1024, 1792x1024, or 1024x1792 for dall-e-3 models.
-                                .withHeight(height)
-                                .withWidth(width)
+                                .height(height)
+                                .width(width)
                                 //This property only works for dall-e-3 model.
-                                .withStyle(style)
-                                .withResponseFormat(responseFormat)
+                                .style(style)
+                                .responseFormat(responseFormat)
                                 .build())
 
         );

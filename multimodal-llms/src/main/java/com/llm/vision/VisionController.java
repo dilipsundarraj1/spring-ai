@@ -16,6 +16,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.List;
+
 @RestController
 public class VisionController {
     private static final Logger log = LoggerFactory.getLogger(VisionController.class);
@@ -34,8 +36,7 @@ public class VisionController {
         log.info("userInput message : {} ", userInput);
         var imageResource = new ClassPathResource("files/vision/zebra.jpg");
         var userMessage = new UserMessage(
-                userInput.prompt(),
-                new Media(MimeTypeUtils.IMAGE_PNG, imageResource)); // media
+                userInput.prompt()); // media
 
 
         var response = chatClient.prompt(new Prompt(userMessage)).call();
@@ -57,8 +58,7 @@ public class VisionController {
             // Create UserMessage
             var userMessage = new UserMessage(
                     //"Explain what do you see in this picture?", // content
-                    prompt,
-                    new Media(MimeTypeUtils.IMAGE_PNG, file.getResource())); // media
+                    prompt); // media
             var response = chatClient.prompt(new Prompt(userMessage)).call();
             log.info("response : {} ", response.chatResponse());
             return ResponseEntity.ok( response.content());
