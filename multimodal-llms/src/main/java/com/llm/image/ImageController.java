@@ -3,7 +3,6 @@ package com.llm.image;
 import com.llm.dto.ImageInput;
 import com.llm.dto.UserInput;
 import jakarta.validation.Valid;
-import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.image.ImagePrompt;
@@ -63,19 +62,18 @@ public class ImageController {
                 new ImagePrompt(imageInput.prompt(),
                         OpenAiImageOptions.builder()
                                 // Model : dall-e-3 or dall-e-2
-                                .withModel(imageInput.model())
+                                .model(imageInput.model())
                                 //hd or standard
-                                .withQuality(imageInput.quality())
+                                .quality(imageInput.quality())
                                 // The number of images to generate.
                                 // Must be between 1 and 10. For dall-e-3, only n=1 is supported.
-                                .withN(1)
                                 // Must be one of 256x256, 512x512, or 1024x1024 for dall-e-2
                                 // Must be one of 1024x1024, 1792x1024, or 1024x1792 for dall-e-3 models.
-                                .withHeight(imageInput.height())
-                                .withWidth(imageInput.width())
+                                .height(imageInput.height())
+                                .width(imageInput.width())
                                 //This property only works for dall-e-3 model.
-                                .withStyle(imageInput.style())
-                                .withResponseFormat(imageInput.responseFormat())
+                                .style(imageInput.style())
+                                .responseFormat(imageInput.responseFormat())
                                 .build())
 
         );

@@ -28,7 +28,7 @@ subprojects {
     apply plugin: 'io.spring.dependency-management'
 
     ext {
-        set('springAiVersion', "1.0.0-M7")
+        set('springAiVersion', "1.0.0")
     }
 
     java {
