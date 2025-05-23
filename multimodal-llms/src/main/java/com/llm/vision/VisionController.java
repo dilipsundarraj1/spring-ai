@@ -34,8 +34,9 @@ public class VisionController {
         log.info("userInput message : {} ", userInput);
         var imageResource = new ClassPathResource("files/vision/zebra.jpg");
         var userMessage = new UserMessage(
-                userInput.prompt(),
-                new Media(MimeTypeUtils.IMAGE_PNG, imageResource)); // media
+                userInput.prompt()
+        //       , new Media(MimeTypeUtils.IMAGE_PNG, imageResource)
+        ); // media
 
 
         var response = chatClient.prompt(new Prompt(userMessage)).call();
@@ -57,8 +58,9 @@ public class VisionController {
             // Create UserMessage
             var userMessage = new UserMessage(
                     //"Explain what do you see in this picture?", // content
-                    prompt,
-                    new Media(MimeTypeUtils.IMAGE_PNG, file.getResource())); // media
+                    prompt
+            //        ,new Media(MimeTypeUtils.IMAGE_PNG, file.getResource())
+            ); // media
             var response = chatClient.prompt(new Prompt(userMessage)).call();
             log.info("response : {} ", response.chatResponse());
             return ResponseEntity.ok( response.content());
