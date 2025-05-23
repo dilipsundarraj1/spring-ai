@@ -84,28 +84,28 @@ public class ToolCallingController {
                 .content();
     }
 
-//    @PostMapping("/v2/tool_calling/custom")
-//    public ChatResponse toolCallingCustom(@RequestBody UserInput userInput) {
-//
-//        ToolCallback[] tools = ToolCallbacks.from(new DateTimeTools());
-//        ToolCallingManager toolCallingManager = ToolCallingManager.builder().build();
-//
-//        ChatOptions chatOptions = ToolCallingChatOptions.builder()
-//                .toolCallbacks(tools)
-//                .internalToolExecutionEnabled(false)
-//                .build();
-//        Prompt prompt = new Prompt(userInput.prompt(), chatOptions);
-//
-//        ChatResponse chatResponse = openAiChatModel.call(prompt);
-//        log.info(" chatResponse : {} ", chatResponse);
-//        while (chatResponse.hasToolCalls()) {
-//            ToolExecutionResult toolExecutionResult = toolCallingManager.executeToolCalls(prompt, chatResponse);
-//
-//            prompt = new Prompt(toolExecutionResult.conversationHistory(), chatOptions);
-//
-//            chatResponse = openAiChatModel.call(prompt);
-//        }
-//
-//        return chatResponse;
-//    }
+    @PostMapping("/v2/tool_calling/custom")
+    public ChatResponse toolCallingCustom(@RequestBody UserInput userInput) {
+
+        ToolCallback[] tools = ToolCallbacks.from(new DateTimeTools());
+        ToolCallingManager toolCallingManager = ToolCallingManager.builder().build();
+
+        ChatOptions chatOptions = ToolCallingChatOptions.builder()
+                .toolCallbacks(tools)
+                .internalToolExecutionEnabled(false)
+                .build();
+        Prompt prompt = new Prompt(userInput.prompt(), chatOptions);
+
+        ChatResponse chatResponse = openAiChatModel.call(prompt);
+        log.info(" chatResponse : {} ", chatResponse);
+        while (chatResponse.hasToolCalls()) {
+            ToolExecutionResult toolExecutionResult = toolCallingManager.executeToolCalls(prompt, chatResponse);
+
+            prompt = new Prompt(toolExecutionResult.conversationHistory(), chatOptions);
+
+            chatResponse = openAiChatModel.call(prompt);
+        }
+
+        return chatResponse;
+    }
 }
