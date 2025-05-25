@@ -89,7 +89,6 @@ public class LlamaChatController {
                 .user(userInput.prompt());
 
         var responseSpec = requestSpec.call();
-        log.info("responseSpec : {} ", responseSpec);
         return responseSpec.content();
     }
 

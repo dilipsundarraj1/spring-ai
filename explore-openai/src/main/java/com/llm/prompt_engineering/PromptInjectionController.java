@@ -41,7 +41,6 @@ public class PromptInjectionController {
         var requestSpec = chatClient.prompt(promptMessage);
 
         var responseSpec = requestSpec.call();
-        log.info("responseSpec : {} ", responseSpec.chatResponse());
         return responseSpec.content();
     }
 

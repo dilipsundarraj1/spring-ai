@@ -33,7 +33,6 @@ public class ChatController {
                 .user(userInput.prompt());
 
         var responseSpec = requestSpec.call();
-        log.info("responseSpec : {} ", responseSpec);
         return responseSpec.content();
     }
 
@@ -47,8 +46,6 @@ public class ChatController {
         var aiResponse = requestSpec
                 .call()
                 .entity(AIResponse.class); // It uses Bean Output Converter.
-
-        log.info("aiResponse : {} ", aiResponse);
         return aiResponse;
     }
 
@@ -88,7 +85,6 @@ public class ChatController {
                 .user(userInput.prompt());
 
         var responseSpec = requestSpec.call();
-        log.info("responseSpec : {} ", responseSpec);
         return responseSpec.content();
     }
 
