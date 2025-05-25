@@ -40,11 +40,12 @@ public class TravelAssistantController {
                         new UserMessage(userInput.prompt())
                 )
         );
-        var requestSpec = chatClient.prompt(promptMessage);
+        var responseSpec = chatClient.prompt(promptMessage).call();
 
-        var responseSpec = requestSpec.call();
-        log.info("responseSpec : {} ", responseSpec.chatResponse());
-        return responseSpec.content();
+        var response = responseSpec.content();
+
+        log.info("response : {} ", response);
+        return response;
     }
 
     @PostMapping("/v2/travel_assistant")
@@ -66,11 +67,12 @@ public class TravelAssistantController {
                 );
 
         log.info("promptMessage : {} ", promptMessage);
-        var requestSpec = chatClient.prompt(promptMessage);
+        var responseSpec = chatClient.prompt(promptMessage).call();
 
-        var responseSpec = requestSpec.call();
-        log.info("responseSpec : {} ", responseSpec.chatResponse());
-        return responseSpec.content();
+        var content = responseSpec.content();
+
+        log.info("content : {} ", content);
+        return content;
     }
 
 }

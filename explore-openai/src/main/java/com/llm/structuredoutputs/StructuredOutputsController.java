@@ -57,7 +57,6 @@ public class StructuredOutputsController {
 
         log.info("requestSpec : {} ", requestSpec);
         var responseSpec = requestSpec.call();
-        log.info("responseSpec : {} ", responseSpec.chatResponse());
         return responseSpec.content();
     }
 

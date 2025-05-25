@@ -33,7 +33,6 @@ public class ChatController {
                 .user(userInput.prompt());
 
         var responseSpec = requestSpec.call();
-        log.info("responseSpec : {} ", responseSpec);
         return responseSpec.content();
     }
 
@@ -88,7 +87,6 @@ public class ChatController {
                 .user(userInput.prompt());
 
         var responseSpec = requestSpec.call();
-        log.info("responseSpec : {} ", responseSpec);
         return responseSpec.content();
     }
 

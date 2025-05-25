@@ -41,7 +41,6 @@ public class PromptInjectionController {
         var requestSpec = chatClient.prompt(promptMessage);
 
         var responseSpec = requestSpec.call();
-        log.info("responseSpec : {} ", responseSpec.chatResponse());
         return responseSpec.content();
     }
 
@@ -74,7 +73,6 @@ public class PromptInjectionController {
                 var promptMessage = new Prompt(List.of(message));
                 var requestSpec = chatClient.prompt(promptMessage);
                 var responseSpec = requestSpec.call();
-                log.info("responseSpec : {} ", responseSpec.chatResponse());
                 yield responseSpec.content();
             }
             case null -> throw new IllegalArgumentException("Got a null response from the model");
