@@ -36,8 +36,6 @@ public class OpenAiChatController {
         log.info("requestSpec : {} ", requestSpec);
 
         var responseSpec = requestSpec.call();
-        log.info("responseSpec1 : {} ", responseSpec);
-        log.info("content : {} ", responseSpec.content());
         return responseSpec.content();
     }
 

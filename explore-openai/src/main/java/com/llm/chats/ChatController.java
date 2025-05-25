@@ -31,19 +31,17 @@ public class ChatController {
     public Object chat(@RequestBody @Valid UserInput userInput) {
 
         log.info("userInput message : {} ", userInput);
-        var requestSpec = chatClient.prompt()
+        var responseSpec = chatClient.prompt()
                 .advisors(new SimpleLoggerAdvisor())
                 .user(userInput.prompt())
+                .call();
                 //.system("You are a helpful assistant")
                 ;
 
-        log.info("requestSpec : {} ", requestSpec);
-
-        var responseSpec = requestSpec.call();
-        log.info("responseSpec1 : {} ", responseSpec);
-        log.info("content : {} ", responseSpec.content());
+        var response = responseSpec.content();
+        log.info("content : {} ", response);
 //        return new AIResponse(responseSpec.content());
-        return responseSpec.chatResponse();
+        return response;
     }
 
     @PostMapping("/v1/chats/entity")
