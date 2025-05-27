@@ -1,0 +1,34 @@
+=========
+Image : |
+=========
+
+{
+	"prompt": "A dog and cat sitting together"
+
+}
+
+{
+	"prompt": "Create a dessert pizza with unexpected toppings like strawberries, marshmallows, and chocolate sauce, presented like a chef’s masterpiece."
+
+}
+
+{
+	"prompt": "Imagine a world where dinosaurs roam around a modern-day city park, interacting with people who are taking selfies with them."
+
+}
+================================================================================================================================================
+=========
+Audio : |
+=========
+
+{
+	"prompt": "The Lion King is an animated film set in the African savannah, following the journey of a young lion cub named Simba."
+}
+
+
+{
+	"prompt": "Peter is a software engineer living in France with his wife, two daughters, and their beloved dog.               He deeply values family time, often enjoying weekends filled with laughter and activities with his loved ones.In addition to being a devoted family man, Pierre has a passion for soccer and plays regularly in his free time.Balancing work and play, he cherishes every moment spent both on the field and at home, where his heart truly belongs."
+}
+
+
+

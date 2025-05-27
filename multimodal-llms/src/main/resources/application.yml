@@ -3,20 +3,15 @@ server:
   servlet:
     context-path: /springai
 spring:
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
   ai:
     openai:
       api-key: ${OPENAI_KEY}
-      chat:
-        enabled: true # By default its true, this triggers the autoconfiguration.
+      chat: # By default its true, this triggers the autoconfiguration.
         options:
-          model: gpt-4o
+          model: gpt-4.1
           temperature: 1.0
           max_completion_tokens: 2000
-      image:
-        api-key: ${OPENAI_KEY}
-        enabled: true
-        options:
-          quality: "hd"
-          n: 1
-          height: 1024
-          width: 1024
