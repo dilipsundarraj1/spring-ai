@@ -59,27 +59,27 @@ public class ToolCallingController {
     @PostMapping("/v1/tool_calling")
     public String toolCalling(@RequestBody UserInput userInput,
                               @RequestHeader(value = "USER_ID", required = false, defaultValue = "") String userId) {
-        ToolCallback[] tools = ToolCallbacks.from(
+        var tools = ToolCallbacks.from(
                 new DateTimeTools()
-                , currencyTools
+//                , currencyTools
         );
 
-        Method method = ReflectionUtils.findMethod(DateTimeTools.class, "getCurrentDateTime");
-        ToolCallback toolCallback = MethodToolCallback.builder()
-                .toolDefinition(ToolDefinition.builder()
-                        .description("Get the current date and time in the user's timezone")
-                        .build())
-                .toolMethod(method)
-                .toolObject(new DateTimeTools())
-                .build();
+//        Method method = ReflectionUtils.findMethod(DateTimeTools.class, "getCurrentDateTime");
+//        ToolCallback toolCallback = MethodToolCallback.builder()
+//                .toolDefinition(ToolDefinition.builder()
+//                        .description("Get the current date and time in the user's timezone")
+//                        .build())
+//                .toolMethod(method)
+//                .toolObject(new DateTimeTools())
+//                .build();
 
 
         return chatClient.prompt()
                 .user(userInput.prompt())
 //               .tools(new DateTimeTools())
-//                .tools(toolCallback)
-                .toolCallbacks(tools)
-                .toolContext(Map.of("userId", userId))
+//                .tools(tools)
+                     .toolCallbacks(tools)
+//                .toolContext(Map.of("userId", userId))
                 .call()
                 .content();
     }

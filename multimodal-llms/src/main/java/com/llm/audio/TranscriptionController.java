@@ -33,7 +33,6 @@ public class TranscriptionController {
         var audioFile = file.getResource();
         AudioTranscriptionPrompt transcriptionRequest = new AudioTranscriptionPrompt(audioFile);
         var response = openAiAudioTranscriptionModel.call(transcriptionRequest);
-        log.info("Transcription completed and the Result : {} ", response.getResult());
         return new ResponseEntity<>(new TranscriptionResponse(response.getResult().getOutput(), file.getOriginalFilename()), HttpStatus.OK);
     }
 

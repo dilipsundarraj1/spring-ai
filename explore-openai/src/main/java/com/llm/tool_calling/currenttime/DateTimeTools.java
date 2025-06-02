@@ -13,14 +13,14 @@ public class DateTimeTools {
 
     private static final Logger log = LoggerFactory.getLogger(DateTimeTools.class);
 
-//    @Tool(
-//            description = "Get the current date and time in the user's timezone"
-////            returnDirect = true
-//    )
-//    String getCurrentDateTime() {
-//        log.info("DateTimeTools is invoked - getCurrentDateTime ");
-//        return LocalDateTime.now().atZone(LocaleContextHolder.getTimeZone().toZoneId()).toString();
-//    }
+    @Tool(
+            description = "Get the current date and time in the user's timezone"
+//            returnDirect = true
+    )
+    String getCurrentDateTimeWihtoutTimeZone() {
+        log.info("DateTimeTools is invoked - getCurrentDateTime ");
+        return LocalDateTime.now().atZone(LocaleContextHolder.getTimeZone().toZoneId()).toString();
+    }
 
 
 
