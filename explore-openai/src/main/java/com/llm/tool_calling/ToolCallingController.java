@@ -48,7 +48,7 @@ public class ToolCallingController {
 
         this.chatClient = builder
                 .defaultSystem("You are a helpful AI Assistant that can access tools if needed to answer user questions!.")
-                .defaultToolCallbacks(toolCallback)
+                .defaultTools(toolCallback)
 //                .defaultTools("currentWeatherFunction")
                 .build();
         this.openAiChatModel = openAiChatModel;
@@ -83,9 +83,11 @@ public class ToolCallingController {
 //        ToolCallback[] tools = ToolCallbacks.from(new DateTimeTools());
         ToolCallingManager toolCallingManager = ToolCallingManager.builder().build();
 
+        // In Spring AI 2.0, calling the ChatModel directly never executes tools
+        // internally (that moved to ToolCallingAdvisor on ChatClient), so the
+        // old internalToolExecutionEnabled(false) flag is no longer needed.
         ChatOptions chatOptions = ToolCallingChatOptions.builder()
 //                .toolCallbacks(tools)
-                .internalToolExecutionEnabled(false)
                 .build();
         Prompt prompt = new Prompt(userInput.prompt(), chatOptions);
 

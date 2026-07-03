@@ -3,16 +3,15 @@ package com.llm.audio;
 import com.llm.dto.TTSInput;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.audio.tts.TextToSpeechPrompt;
 import org.springframework.ai.openai.OpenAiAudioSpeechModel;
 import org.springframework.ai.openai.OpenAiAudioSpeechOptions;
-import org.springframework.ai.openai.api.OpenAiAudioApi;
-import org.springframework.ai.openai.audio.speech.SpeechPrompt;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
-import javax.validation.Valid;
+import jakarta.validation.Valid;
 
 import static com.llm.utils.AudioUtil.writeMP3ToFile;
 
@@ -32,7 +31,7 @@ public class TextToSpeechController {
     public ResponseEntity<String> images(@RequestBody TTSInput ttsInput) {
         log.info("userInput message prompt is : {} ", ttsInput);
 
-        var speechPrompt = new SpeechPrompt(ttsInput.prompt());
+        var speechPrompt = new TextToSpeechPrompt(ttsInput.prompt());
         var response = openAiAudioSpeechModel.call(speechPrompt);
         log.info("response : {} ", response);
         byte[] responseAsBytes = response.getResult().getOutput();
@@ -46,14 +45,14 @@ public class TextToSpeechController {
 
         var speechOptions = OpenAiAudioSpeechOptions.builder()
                 .speed(ttsInput.speed())
-                .model(ttsInput.model().value)
+                .model(ttsInput.model())
                 .responseFormat(ttsInput.responseFormat())
                 .voice(ttsInput.voice())
                 .build();
 
         log.info("speechOptions : {} ", speechOptions);
 
-        var speechPrompt = new SpeechPrompt(ttsInput.prompt(), speechOptions);
+        var speechPrompt = new TextToSpeechPrompt(ttsInput.prompt(), speechOptions);
         var response = openAiAudioSpeechModel.call(speechPrompt);
         log.info("response : {} ", response);
         byte[] responseAsBytes = response.getResult().getOutput();
@@ -62,7 +61,7 @@ public class TextToSpeechController {
         log.info("outputFilePath : {} ", outputFilePath);
 
 
-        writeMP3ToFile(responseAsBytes, OUTPUT_PATH + "/"+ttsInput.fileName()+"."+ttsInput.responseFormat().value);
+        writeMP3ToFile(responseAsBytes, OUTPUT_PATH + "/"+ttsInput.fileName()+"."+ttsInput.responseFormat().getValue());
 
         return ResponseEntity.ok("Audio Generated Successfully");
     }

@@ -1,6 +1,6 @@
 plugins {
     id 'java'
-    id 'org.springframework.boot' version '3.4.4' apply(false)
+    id 'org.springframework.boot' version '4.1.0' apply(false)
     id 'io.spring.dependency-management' version '1.1.7' apply(false)
 }
 
@@ -28,12 +28,12 @@ subprojects {
     apply plugin: 'io.spring.dependency-management'
 
     ext {
-        set('springAiVersion', "1.0.0")
+        set('springAiVersion', "2.0.0")
     }
 
     java {
-        sourceCompatibility = JavaVersion.VERSION_21
-        targetCompatibility = JavaVersion.VERSION_21
+        sourceCompatibility = JavaVersion.VERSION_25
+        targetCompatibility = JavaVersion.VERSION_25
     }
 
     tasks.named('test') {

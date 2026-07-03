@@ -30,11 +30,8 @@ public class StructuredOutputsController {
 
     private final ChatClient chatClient;
 
-    private final ObjectMapper objectMapper;
-
-    public StructuredOutputsController(ChatClient.Builder chatClientBuilder, ObjectMapper objectMapper) {
+    public StructuredOutputsController(ChatClient.Builder chatClientBuilder) {
         this.chatClient = chatClientBuilder.build();
-        this.objectMapper = objectMapper;
     }
 
     @Value("classpath:/prompt-templates/structured_outputs/flight_details.st")
