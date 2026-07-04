@@ -39,3 +39,4 @@ out/
 rag-pgvector.log
 
 .DS_Store
+*.log

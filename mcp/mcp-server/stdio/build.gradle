@@ -26,4 +26,7 @@ dependencyManagement {
 
 tasks.named('test') {
     useJUnitPlatform()
+    // the integration test launches the packaged jar over STDIO
+    dependsOn tasks.named('bootJar')
+    systemProperty 'mcp.server.jar', tasks.bootJar.archiveFile.get().asFile.absolutePath
 }
