@@ -78,8 +78,8 @@ public class ChatController {
         var chatOptions = ChatOptions
                 .builder()
                 .temperature(temperature)
-                .maxTokens(maxTokens)
-                .build();
+                .maxTokens(maxTokens);
+                //.build();
 
         var chatClient1 = chatClient.mutate()
                 .defaultOptions(chatOptions)
