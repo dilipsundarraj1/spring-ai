@@ -247,16 +247,29 @@ lifecycle, exactly like a real MCP client:
 
 ### What is covered
 
-| Test | Needs `WEATHER_API_KEY`? |
-|---|---|
-| `exposesTheWeatherTools` — `tools/list` returns exactly the two weather tools | no |
-| `rejectsForecastDaysAboveTheMaximum` — `days: 20` returns an MCP error ("days must be between 1 and 14") | no |
-| `rejectsForecastDaysBelowTheMinimum` — `days: 0` returns the same error | no |
-| `returnsCurrentWeatherWhenRealApiKeyIsAvailable` — live `/current.json` call | yes (skipped otherwise) |
-| `returnsForecastWeatherWhenRealApiKeyIsAvailable` — live `/forecast.json` call | yes (skipped otherwise) |
+The weatherapi.com backend is replaced by a **WireMock stub**: the test starts a WireMock
+server on a random port and points the child process at it with a
+`--weather.api-url=<stub url>` program argument (possible because the URL is externalized
+config, never hardcoded). Stub responses live in `src/test/resources/wiremock/`. This makes
+the whole pipeline — MCP `tools/call` → `WeatherService` → `RestClient` → JSON
+deserialization → tool result — run deterministically offline, with no API key and no
+network:
 
-The validation tests need no network because the range check fires before any HTTP call, and
-the server itself boots fine with the dummy key the test falls back to.
+| Test | Verifies |
+|---|---|
+| `exposesTheWeatherTools` | `tools/list` returns exactly the two weather tools |
+| `rejectsForecastDaysAboveTheMaximum` | `days: 20` returns an MCP error ("days must be between 1 and 14") |
+| `rejectsForecastDaysBelowTheMinimum` | `days: 0` returns the same error |
+| `returnsCurrentWeatherFromTheStubbedApi` | full happy path incl. deserialization — asserts stub values come back |
+| `returnsForecastWeatherFromTheStubbedApi` | same for the 2-day forecast (dates, conditions) |
+| `surfacesWeatherApiErrorsAsToolErrors` | a stubbed 401 from the API becomes an MCP tool error |
+
+A stub only encodes *our snapshot* of the API's shape — it can't catch weatherapi.com
+changing its response format. That's what
+[`McpWeatherServerLiveApiTest`](src/test/java/com/mcp/McpWeatherServerLiveApiTest.java) is
+for: two smoke tests against the real API, gated by
+`@EnabledIfEnvironmentVariable(named = "WEATHER_API_KEY", ...)` — the whole class is skipped
+unless the key is set (see the run commands above).
 
 Note: if the jar is missing (only possible when running the test from an IDE without Gradle
 delegation), `ProcessBuilder` still starts `java` successfully — the JVM then dies complaining

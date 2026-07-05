@@ -1,0 +1,17 @@
+{
+  "location": {
+    "name": "London",
+    "region": "City of London, Greater London",
+    "country": "United Kingdom",
+    "lat": 51,
+    "lon": 0
+  },
+  "current": {
+    "temp_f": 72.0,
+    "condition": {
+      "text": "Overcast"
+    },
+    "wind_mph": 4.3,
+    "humidity": 71
+  }
+}

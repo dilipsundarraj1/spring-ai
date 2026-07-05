@@ -1,0 +1,17 @@
+server:
+  port: 8080
+
+spring:
+  ai:
+    mcp:
+      server:
+        name: my-weather-server-webmvc
+        version: 0.0.1
+        type: SYNC
+        protocol: STREAMABLE
+        streamable-http:
+          mcp-endpoint: /mcp
+
+weather:
+  api-key: ${WEATHER_API_KEY}
+  api-url: http://api.weatherapi.com/v1

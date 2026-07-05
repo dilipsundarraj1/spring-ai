@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.llm'
-version = '0.0.2-SNAPSHOT'
+version = '0.0.1-SNAPSHOT'
 
 dependencies {
 
@@ -27,7 +27,4 @@ dependencyManagement {
 
 tasks.named('test') {
     useJUnitPlatform()
-    // the integration test launches the packaged jar over STDIO
-    dependsOn tasks.named('bootJar')
-    systemProperty 'mcp.server.jar', tasks.bootJar.archiveFile.get().asFile.absolutePath
 }

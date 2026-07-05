@@ -9,8 +9,7 @@ import java.util.Map;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
-import io.modelcontextprotocol.client.transport.ServerParameters;
-import io.modelcontextprotocol.client.transport.StdioClientTransport;
+import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
 import io.modelcontextprotocol.json.jackson3.JacksonMcpJsonMapper;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.junit.jupiter.api.AfterAll;
@@ -18,6 +17,11 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import tools.jackson.databind.json.JsonMapper;
+
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
@@ -28,50 +32,35 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.options
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Boots the packaged jar as a child process (like a real MCP client would) and talks to
- * it over the STDIO transport. The weatherapi.com backend is replaced by a WireMock stub
- * so the full pipeline — tool call, RestClient request, JSON deserialization, tool result
- * — is covered deterministically without a real API key or network access.
- *
- * Requires the boot jar to be built first — the Gradle test task depends on bootJar to
- * guarantee that. Live calls against the real weatherapi.com live in
+ * Boots the server in-process on a random port and talks to it over the streamable HTTP
+ * transport — the same way a remote MCP client would. The weatherapi.com backend is
+ * replaced by a WireMock stub so the full pipeline — tool call, RestClient request, JSON
+ * deserialization, tool result — is covered deterministically without a real API key or
+ * network access. Live calls against the real weatherapi.com live in
  * {@link McpWeatherServerLiveApiTest}.
  */
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-class McpWeatherServerIntegrationTest {
-
-	private static final String SERVER_JAR = System.getProperty("mcp.server.jar", "build/libs/stdio-0.0.2-SNAPSHOT.jar");
+class McpWeatherServerWebMvcIntegrationTest {
 
 	private static final String STUB_API_KEY = "test-api-key";
 
-	private WireMockServer weatherApi;
+	private static final WireMockServer weatherApi = new WireMockServer(options().dynamicPort());
+
+	@LocalServerPort
+	int port;
 
 	private McpSyncClient client;
 
-	@BeforeAll
-	void startStubAndConnectToServer() {
-		weatherApi = new WireMockServer(options().dynamicPort());
+	@DynamicPropertySource
+	static void weatherProperties(DynamicPropertyRegistry registry) {
 		weatherApi.start();
-		stubWeatherApi();
-
-		// the server child process is pointed at the stub instead of api.weatherapi.com
-		var serverParams = ServerParameters.builder("java")
-			.args("-jar", SERVER_JAR, "--weather.api-url=" + weatherApi.baseUrl())
-			.addEnvVar("WEATHER_API_KEY", STUB_API_KEY)
-			.build();
-
-		var transport = new StdioClientTransport(serverParams, new JacksonMcpJsonMapper(JsonMapper.builder().build()));
-
-		client = McpClient.sync(transport)
-			.requestTimeout(Duration.ofSeconds(30))
-			.initializationTimeout(Duration.ofSeconds(60))
-			.build();
-
-		var initResult = client.initialize();
-		assertThat(initResult.serverInfo().name()).isEqualTo("my-weather-server");
+		registry.add("weather.api-url", weatherApi::baseUrl);
+		registry.add("weather.api-key", () -> STUB_API_KEY);
 	}
 
-	private void stubWeatherApi() {
+	@BeforeAll
+	void stubWeatherApiAndConnect() {
 		weatherApi.stubFor(get(urlPathEqualTo("/current.json"))
 			.withQueryParam("key", equalTo(STUB_API_KEY))
 			.withQueryParam("q", equalTo("London"))
@@ -89,6 +78,19 @@ class McpWeatherServerIntegrationTest {
 			.willReturn(aResponse().withStatus(401)
 				.withHeader("Content-Type", "application/json")
 				.withBody("{\"error\":{\"code\":2006,\"message\":\"API key provided is invalid\"}}")));
+
+		var transport = HttpClientStreamableHttpTransport.builder("http://localhost:" + port)
+			.endpoint("/mcp")
+			.jsonMapper(new JacksonMcpJsonMapper(JsonMapper.builder().build()))
+			.build();
+
+		client = McpClient.sync(transport)
+			.requestTimeout(Duration.ofSeconds(30))
+			.initializationTimeout(Duration.ofSeconds(60))
+			.build();
+
+		var initResult = client.initialize();
+		assertThat(initResult.serverInfo().name()).isEqualTo("my-weather-server-webmvc");
 	}
 
 	@AfterAll
@@ -96,9 +98,7 @@ class McpWeatherServerIntegrationTest {
 		if (client != null) {
 			client.closeGracefully();
 		}
-		if (weatherApi != null) {
-			weatherApi.stop();
-		}
+		weatherApi.stop();
 	}
 
 	@Test
@@ -165,7 +165,7 @@ class McpWeatherServerIntegrationTest {
 	}
 
 	private static String readResource(String path) {
-		try (var in = McpWeatherServerIntegrationTest.class.getResourceAsStream(path)) {
+		try (var in = McpWeatherServerWebMvcIntegrationTest.class.getResourceAsStream(path)) {
 			return new String(in.readAllBytes(), StandardCharsets.UTF_8);
 		}
 		catch (IOException e) {
