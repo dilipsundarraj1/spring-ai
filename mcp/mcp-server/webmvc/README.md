@@ -1,6 +1,7 @@
 
 <!-- TOC -->
 * [MCP Weather Server (Streamable HTTP / WebMVC)](#mcp-weather-server-streamable-http--webmvc)
+  * [What is streamable HTTP?](#what-is-streamable-http)
   * [SYNC vs ASYNC](#sync-vs-async)
     * [What SYNC means (this module)](#what-sync-means-this-module)
     * [What would change for ASYNC](#what-would-change-for-async)
@@ -24,6 +25,124 @@ The same weather MCP server as the [`stdio` sibling](../stdio/README.md) — ide
 models, and `weather.*` configuration — but exposed over the **streamable HTTP transport**
 instead of STDIO. See the stdio README's ["When to use STDIO"](../stdio/README.md#when-to-use-stdio)
 section for how to choose between the two.
+
+## What is streamable HTTP?
+
+**Plain HTTP:**
+
+- Strictly one request → one response: the client asks, the server answers once, the
+  exchange is over.
+- Mapped naively onto MCP, every JSON-RPC message would get exactly one JSON reply —
+  workable for a quick tool call.
+- But the server has no way to push anything *while* a tool runs: no progress updates, no
+  log messages, no server-initiated MCP requests (sampling/elicitation).
+- And between requests there is no server→client channel at all.
+
+**Streamable HTTP (MCP's current HTTP transport):**
+
+- Keeps HTTP's infrastructure-friendliness while adding streaming *on demand*.
+- Everything happens on **one endpoint** (`/mcp` here).
+- The client sends every JSON-RPC message as an **HTTP POST**.
+- The server then **chooses, per request**, how to respond (the spec allows either):
+  - `Content-Type: application/json` — a single one-shot response, exactly like classic HTTP.
+  - `Content-Type: text/event-stream` — the response becomes a **Server-Sent Events stream**
+    for that one request: the server can emit many messages (progress notifications, logs,
+    its own requests back to the client) and finishes with the final JSON-RPC response.
+- How the MCP Java SDK used here exercises that choice: `initialize` is answered with plain
+  `application/json`, but **every other request — including `tools/call` — is always answered
+  over SSE**. When a tool has nothing extra to say (this weather server), the stream simply
+  carries one event (the final result) and closes — a plain response in SSE clothing.
+- Optionally, the client can open a long-lived **GET** stream on the same endpoint for
+  unsolicited server→client notifications (e.g. "the tool list changed").
+- A `Mcp-Session-Id` header correlates requests into a session.
+- Streams are resumable (`Last-Event-ID`) after a dropped connection.
+
+**Plain HTTP — one reply, then silence:**
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as MCP client
+    participant Server as MCP server (/mcp)
+
+    Client->>Server: POST tools/call (JSON-RPC)
+    Note over Client,Server: while the tool runs: no progress, no logs,<br/>no way for the server to say anything else
+    Server-->>Client: 200 application/json — the result
+    Note over Client,Server: after the response, between requests:<br/>no server→client channel at all
+```
+
+**Streamable HTTP, fast tool — nothing extra to say (what this weather server does):**
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as MCP client
+    participant Server as MCP server (/mcp)
+
+    Client->>Server: POST tools/call (JSON-RPC)
+    Server-->>Client: 200 text/event-stream (SSE) opens
+    Server-->>Client: event: final JSON-RPC result — stream closes right away
+    Note over Client,Server: effectively a plain response in SSE clothing<br/>(the spec would also allow one-shot application/json here)
+```
+
+**Streamable HTTP, slow tool — the response becomes a stream:**
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as MCP client
+    participant Server as MCP server (/mcp)
+
+    Client->>Server: POST tools/call (JSON-RPC)
+    Server-->>Client: 200 text/event-stream (SSE) opens
+    Server-->>Client: event: progress 10%
+    Server-->>Client: event: log "calling upstream API…"
+    Server-->>Client: event: progress 80%
+    Server-->>Client: event: final JSON-RPC result — stream closes
+    Note over Client,Server: progress, logs, even server-initiated requests<br/>flow before the final result
+```
+
+**Streamable HTTP — the optional listening channel:**
+
+Independent of any tool call, a client can also keep one long-lived GET stream open to hear
+from the server between requests:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as MCP client
+    participant Server as MCP server (/mcp)
+
+    Client->>Server: GET /mcp (long-lived SSE)
+    Note over Client,Server: connection stays open, idle until the server has news
+    Server-->>Client: event: notification "tool list changed"
+    Note over Client,Server: server can speak between requests —<br/>resumable via Last-Event-ID after a drop
+```
+
+**In short:**
+
+| | Plain HTTP | Streamable HTTP |
+|---|---|---|
+| Messages per request | exactly one response | one response **or** a stream of them |
+| Server push mid-request | impossible | progress/logs/server requests via SSE |
+| Server push between requests | impossible | optional long-lived GET stream |
+| Infrastructure fit | ideal | same — it *is* HTTP, streams only when needed |
+
+**Historical note:**
+
+- Streamable HTTP replaced MCP's earlier "HTTP+SSE" transport.
+- The old transport required a permanently open SSE channel on a second endpoint just to
+  receive responses.
+- Folding both directions into one endpoint that streams only when necessary made servers
+  easier to load-balance and scale statelessly — an idle client now costs nothing.
+
+**Takeaway:**
+
+- "Streamable HTTP" is best read as *HTTP that can become a stream when the server has more
+  than one thing to say*.
+- This module's tools never have more than one thing to say, so on the wire it behaves like
+  ordinary request/response — but the transport is ready the moment a tool wants to report
+  progress.
 
 The tool code is unchanged; only the transport configuration differs:
 
