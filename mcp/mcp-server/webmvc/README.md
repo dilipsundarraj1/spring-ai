@@ -243,8 +243,8 @@ slow calls in flight at once**, or when the tools themselves are naturally react
 
 ### ASYNC on WebMVC — possible, but know what you get
 
-Since the reactive stack has its own home (the `webflux` sibling — currently an empty
-placeholder module in this repo), a fair question is whether `type: ASYNC` on **this** webmvc
+Since the reactive stack has its own home (the [`webflux` sibling](../webflux/README.md),
+which implements exactly that), a fair question is whether `type: ASYNC` on **this** webmvc
 module even makes sense. It's a supported combination — `type` and transport are independent,
 and Reactor is already on the classpath (the MCP Java SDK itself is built on it) — but you
 need to be clear about what it does and doesn't buy.
@@ -280,8 +280,8 @@ So ASYNC-on-webmvc is a half-step, legitimate in two situations: you're **pinned
 servlet stack** (existing servlet filters, security config, agents) but want reactive
 composition inside tools; or you're **migrating incrementally** toward webflux and want the
 tool signatures reactive first, the runtime later. If neither applies, stay `SYNC` here — and
-when the full event-loop benefit is wanted, implement it in the `webflux` module where the
-whole chain (Netty → transport → `WebClient`) is non-blocking.
+when the full event-loop benefit is wanted, use the [`webflux` module](../webflux/README.md),
+where the whole chain (Netty → transport → `WebClient`) is non-blocking.
 
 ## Running the server
 
