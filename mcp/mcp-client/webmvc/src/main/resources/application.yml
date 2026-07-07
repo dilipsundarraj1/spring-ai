@@ -1,0 +1,21 @@
+server:
+  port: 9000
+
+spring:
+  ai:
+    openai:
+      api-key: ${OPENAI_KEY}
+      chat:
+        options:
+          model: gpt-5.5
+    mcp:
+      client:
+        name: my-weather-client-webmvc
+        version: 0.0.1
+        type: SYNC
+        request-timeout: 30s
+        streamable-http:
+          connections:
+            weather-server:
+              url: http://localhost:8081
+              endpoint: /mcp

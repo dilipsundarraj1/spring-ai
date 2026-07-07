@@ -9,8 +9,13 @@ spring:
         version: 0.0.1
         type: SYNC
         protocol: STREAMABLE
+        # Stateless alternative: no sessions, so server restarts and horizontal
+        # scaling are invisible to clients (trade-off: no server -> client
+        # features like notifications, sampling, or elicitation).
+        # To enable, comment out "protocol: STREAMABLE" above and uncomment:
+        # protocol: STATELESS
         streamable-http:
-          mcp-endpoint: /mcp
+          mcp-endpoint: /mcp   # same endpoint property is used by STATELESS mode
 
 weather:
   api-key: ${WEATHER_API_KEY}

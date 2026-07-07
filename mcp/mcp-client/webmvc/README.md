@@ -1,0 +1,237 @@
+<!-- TOC -->
+* [MCP Weather Client (WebMVC)](#mcp-weather-client-webmvc)
+  * [How it works](#how-it-works)
+    * [From YAML to `ToolCallbackProvider`](#from-yaml-to-toolcallbackprovider)
+    * [How it all fits together](#how-it-all-fits-together)
+  * [Stateful by default](#stateful-by-default)
+    * [How the session works](#how-the-session-works)
+    * [What a stateful session buys you](#what-a-stateful-session-buys-you)
+    * [The trade-off](#the-trade-off)
+    * [Scaling out: multiple server instances in the cloud](#scaling-out-multiple-server-instances-in-the-cloud)
+      * [Options, in order of practicality](#options-in-order-of-practicality)
+  * [Going stateless](#going-stateless)
+    * [How it works under the hood](#how-it-works-under-the-hood)
+    * [Benefits](#benefits)
+  * [Running](#running)
+  * [Troubleshooting](#troubleshooting)
+<!-- TOC -->
+
+# MCP Weather Client (WebMVC)
+
+
+A Spring Boot MCP **client** that connects to the [MCP Weather Server (WebMVC)](../../mcp-server/webmvc) over **Streamable HTTP** and exposes the server's weather tools to an OpenAI-backed `ChatClient`.
+
+## How it works
+
+- Uses the default [`spring-ai-starter-mcp-client`](https://docs.spring.io/spring-ai/reference/api/mcp/mcp-client-boot-starter-docs.html) Boot starter with a `SYNC` client.
+- Connects to the weather server at `http://localhost:8080/mcp` (see `application.yml`):
+
+```yaml
+spring:
+  ai:
+    mcp:
+      client:
+        type: SYNC
+        streamable-http:
+          connections:
+            weather-server:
+              url: http://localhost:8080
+              endpoint: /mcp
+```
+
+- The starter auto-discovers the server's tools (`getWeatherForecastByLocation`, `getForecastWeatherByLocation`) and exposes them as a `ToolCallbackProvider`, which `ChatController` registers on the `ChatClient` via `defaultTools(...)`.
+- On startup, `McpClientApplication` logs the tools discovered from every connected MCP server.
+
+### From YAML to `ToolCallbackProvider`
+
+The `mcpToolCallbackProvider` injected into `ChatController` is wired up entirely by the starter's auto-configuration:
+
+- **Connections → `McpSyncClient` beans**
+  - Each entry under `spring.ai.mcp.client.streamable-http.connections` produces one MCP client.
+  - The single `weather-server` entry creates an `McpSyncClient` (because `type: SYNC`).
+  - On startup, that client performs the MCP `initialize` handshake against `http://localhost:8080/mcp`.
+  - `name` / `version` are sent as the client info; `request-timeout` applies to every call.
+
+- **Clients → one `ToolCallbackProvider` bean**
+  - Active because `spring.ai.mcp.client.toolcallback.enabled` defaults to `true`.
+  - The starter wraps *all* `McpSyncClient`s in a single `SyncMcpToolCallbackProvider`.
+  - The provider calls `tools/list` on each server and adapts every MCP tool into a Spring AI `ToolCallback`.
+  - Injection into `ChatController` is by type (`ToolCallbackProvider`) — the parameter name is just a local name.
+
+- **Provider → `ChatClient` → LLM**
+  - `ChatController` registers the provider via `defaultTools(...)`.
+  - The tool names, descriptions, and input schemas are sent to the LLM with each request.
+  - When the model picks a tool, the callback issues an MCP `tools/call` over the same streamable HTTP connection and returns the result to the model.
+
+- **Adding another server**
+  - Just add another entry under `connections:` — its tools automatically show up in the same provider, no code changes needed.
+
+### How it all fits together
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as curl
+    participant C as MCP Client<br/>(:9000)
+    participant L as LLM Provider<br/>(OpenAI / Gemini)
+    participant S as MCP Server<br/>(:8080)
+    participant W as weatherapi.com
+
+    rect rgb(240, 240, 240)
+        Note over C,S: Startup — MCP client auto-configuration
+        C->>S: initialize (MCP handshake)
+        C->>S: tools/list
+        S-->>C: 2 weather tools → ToolCallbackProvider
+    end
+
+    U->>C: GET /chat?question=...
+    C->>L: prompt + tool schemas
+
+    loop until the model has all the data it needs
+        L-->>C: tool call request (e.g. getWeatherForecastByLocation)
+        C->>S: tools/call (Streamable HTTP POST /mcp)
+        S->>W: GET /current.json or /forecast.json
+        W-->>S: weather data
+        S-->>C: tool result
+        C->>L: tool result
+    end
+
+    L-->>C: final natural-language answer
+    C-->>U: response
+```
+
+- The **startup block** happens once: the auto-configured `McpSyncClient` does the MCP handshake and tool discovery that feeds the `ToolCallbackProvider`.
+- Everything after it happens **per request**: the client sends the question *plus* the discovered tool schemas to the LLM; the LLM never talks to the MCP server directly — it only *asks* the client to run a tool.
+- The **loop** repeats if the model decides to call more tools (e.g. the forecast tool as well).
+- All client ↔ server traffic is JSON-RPC over Streamable HTTP `POST http://localhost:8080/mcp`.
+
+##  Stateful by default
+
+Streamable HTTP is **stateful** out of the box: the Spring AI server starter defaults to `spring.ai.mcp.server.protocol: STREAMABLE`, which manages a session per client.
+
+### How the session works
+
+- During the `initialize` handshake the server generates a session ID and returns it in the `Mcp-Session-Id` response header.
+- The client sends that header on **every** subsequent request (`tools/list`, `tools/call`, …), so the server always knows which client it is talking to.
+- Sessions live **in server memory** — they do not survive a server restart.
+
+### What a stateful session buys you
+
+The session is a persistent, addressable channel back to a specific client. Everything that flows *server → client* depends on it:
+
+- **Notifications** — the server pushes `tools/list_changed`, resource/prompt change events, and log messages without the client polling.
+- **Sampling** — mid-tool-call, the server can ask the *client's* LLM to generate content.
+- **Elicitation** — the server can pause a tool call and ask the end user for missing input.
+- **Progress + streaming** — long-running tools stream progress over the session's SSE channel, resumable via `Last-Event-ID` after a dropped connection.
+- **Per-client server state** — e.g. resource subscriptions only make sense if the server remembers who subscribed.
+
+### The trade-off
+
+- A server **restart wipes all sessions**: the first request from an already-running client fails once, then the client re-handshakes automatically (see [Troubleshooting](#troubleshooting)).
+- Horizontal scaling needs sticky sessions, since the session lives in one server instance's memory.
+- For a pure request/response tool server like this weather example, none of the server → client features are used — switching the server to `protocol: STATELESS` removes the session entirely, making restarts invisible and scaling trivial at the cost of those features.
+
+### Scaling out: multiple server instances in the cloud
+
+With the stateful default, running several MCP server instances behind a load balancer breaks:
+
+1. The client's `initialize` lands on **instance A**, which stores the session **in its own JVM memory** and returns the `Mcp-Session-Id`.
+2. The next `tools/call` is routed to **instance B**, which has never heard of that session → "unknown session" 404.
+3. The client invalidates and re-handshakes — possibly landing on **instance C**. With round-robin routing this session churn happens continuously, not just after restarts.
+
+#### Options, in order of practicality
+
+- **`protocol: STATELESS` (the standard answer).** No session IDs, so *any* instance can serve *any* request — round-robin, autoscaling, and rolling deploys all just work. The right fit for tool-only servers like this weather service.
+- **Sticky sessions (keep stateful).** Route by the `Mcp-Session-Id` header (nginx / Envoy / Istio can hash on a header). Fragile: scale-in or a pod crash still kills every session pinned to that instance, load skews, and autoscaling fights the affinity.
+- **Externalized session state (not really available).** Sharing sessions via Redis is not supported — the MCP Java SDK keeps the session map inside the transport provider with no pluggable store. Even then, the server → client SSE stream is a live connection bound to one instance, so cross-instance push would need an internal pub/sub layer.
+
+**Decision rule:** tools only → `STATELESS` and scale freely; need notifications / sampling / elicitation → stateful with sticky sessions and few, long-lived instances.
+
+## Going stateless
+
+Switching is a one-line change in the **server's** `application.yml` (already present there, commented out):
+
+```yaml
+spring:
+  ai:
+    mcp:
+      server:
+        # protocol: STREAMABLE
+        protocol: STATELESS
+        streamable-http:
+          mcp-endpoint: /mcp   # same endpoint property is used by STATELESS mode
+```
+
+No client changes are needed — the client simply never receives an `Mcp-Session-Id` header, so it stops sending one.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as MCP Client
+    participant LB as Load Balancer
+    participant A as Server Instance A
+    participant B as Server Instance B
+
+    Note over C,B: STATELESS — every request is self-contained, no Mcp-Session-Id
+
+    C->>LB: POST /mcp — initialize
+    LB->>A: route to any instance
+    A-->>C: capabilities (no session ID issued)
+
+    C->>LB: POST /mcp — tools/call getWeatherForecastByLocation
+    LB->>B: different instance — doesn't matter
+    B-->>C: tool result
+
+    Note over A: Instance A restarts (or is scaled away)
+
+    C->>LB: POST /mcp — tools/call getForecastWeatherByLocation
+    LB->>B: route
+    B-->>C: tool result — nothing was lost
+```
+
+### How it works under the hood
+
+- Every request carries everything the server needs — no session ID is issued after `initialize` and none is expected later, so the load balancer can send each request to **any** instance, and an instance disappearing mid-conversation (step in the diagram where A restarts) is invisible to the client.
+- The auto-configuration swaps the entire server stack: instead of a session-based `McpSyncServer`, `McpServerStatelessAutoConfiguration` builds an **`McpStatelessSyncServer`** (or the async variant) on a **`WebMvcStatelessServerTransport`**, registered at the same `/mcp` endpoint.
+- Each `POST /mcp` is a **self-contained JSON-RPC exchange**: parse the request → dispatch to the tool → return the result in the HTTP response body. Nothing is stored between requests.
+- The server **never issues or validates** an `Mcp-Session-Id` header, and there is no `GET` SSE listening stream — the two ingredients that make the default mode stateful.
+- `initialize` is still answered (so existing clients keep working), but the server records nothing about the client afterwards.
+- Tool handlers receive a per-request **`McpTransportContext`** instead of an `McpSyncServerExchange` — that missing exchange object is *why* stateless tools cannot call back to the client (no sampling, elicitation, or notifications): there is simply no channel to send them on.
+
+### Benefits
+
+- **Restart-proof** — there is no session to lose, so the "first request after a restart fails" problem disappears entirely.
+- **Scales horizontally for free** — any instance can serve any request: plain round-robin load balancing, autoscaling, rolling deploys, and spot/preemptible instances all just work.
+- **Serverless-friendly** — fits scale-to-zero platforms (Cloud Run, Lambda) where instances are ephemeral by design.
+- **Lower memory + simpler ops** — no in-memory session map; every request is independent and reproducible with a single `curl`, which makes debugging easier.
+
+## Running
+
+1. Start the weather server (in another terminal):
+
+   ```bash
+   WEATHER_API_KEY=<your-weatherapi-key> ./gradlew :mcp:mcp-server:webmvc:bootRun
+   ```
+
+2. Start this client (listens on port **9000**):
+
+   ```bash
+   OPENAI_KEY=<your-openai-key> ./gradlew :mcp:mcp-client:webmvc:bootRun
+   ```
+
+3. Ask a weather question — the LLM decides which MCP tool to call:
+
+   ```bash
+   curl -G http://localhost:9000/chat --data-urlencode "question=What is the current weather in New York?"
+
+   curl -G http://localhost:9000/chat --data-urlencode "question=Give me a 5 day forecast for Dallas"
+   ```
+
+## Troubleshooting
+
+**First request after a server restart fails** (log shows `Server does not recognize session … Invalidating` and `MCP session with server terminated`; the LLM replies that the weather service is unavailable).
+
+- The `STREAMABLE` protocol is *stateful*: the server keeps MCP sessions in memory, so a restart wipes them. The client's next call still carries the old session ID, the server rejects it, and that one request fails. The client then invalidates the stale session and re-handshakes automatically — **just retry the request**.
+- To make server restarts seamless, switch the server to `spring.ai.mcp.server.protocol: STATELESS` (fine for plain tool servers; you lose server-initiated features like notifications and sampling).
+
+**Client fails to start with `Client failed to initialize by explicit API call`** — the MCP server isn't running (or the `url`/`endpoint` in `application.yml` is wrong). Start the server first; the client verifies the connection eagerly at startup.

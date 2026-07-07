@@ -11,6 +11,7 @@ contain working Spring AI examples of everything described here.
   * [3. What is MCP?](#3-what-is-mcp)
     * [The USB-C analogy](#the-usb-c-analogy)
   * [4. MCP architecture: Host, Client, Server](#4-mcp-architecture-host-client-server)
+    * [The REST analogy: MCP Server ≈ REST API, MCP Client ≈ REST Client](#the-rest-analogy-mcp-server--rest-api-mcp-client--rest-client)
     * [Where Spring AI fits](#where-spring-ai-fits)
   * [5. What can an MCP server offer?](#5-what-can-an-mcp-server-offer)
   * [6. How it works: a tool call, step by step](#6-how-it-works-a-tool-call-step-by-step)
@@ -170,6 +171,36 @@ Key points to remember:
 - The **LLM never talks to the server directly** — the host mediates every call.
 - Servers don't know or care which AI app is calling them. Our weather server works
   identically with Claude Desktop, MCP Inspector, or a Spring AI client.
+
+### The REST analogy: MCP Server ≈ REST API, MCP Client ≈ REST Client
+
+If you've built Spring applications, you already know this pattern — it's the same
+client/server relationship you use every day with REST:
+
+| REST world | MCP world | The shared idea |
+|---|---|---|
+| **REST API** (e.g. a `@RestController` exposing endpoints) | **MCP Server** (exposing tools/resources/prompts) | A server publishes capabilities in a standard format and waits for requests |
+| **REST Client** (`RestClient`, `WebClient`, Postman) | **MCP Client** (Spring AI's MCP client, the one inside Claude Desktop) | A connector that knows how to speak the protocol and invoke the server |
+| **Endpoints** (`GET /weather?city=...`) | **Tools** (`getWeatherForecastByLocation(city)`) | Named operations the server offers |
+| **OpenAPI / Swagger spec** | **`tools/list` discovery** | A machine-readable description of what's available and what inputs it takes |
+| **HTTP + JSON** | **JSON-RPC over STDIO or streamable HTTP** | An agreed wire format so any client can talk to any server |
+| **Your service code** calls the API when *your logic* decides to | **The LLM** asks for a tool call when *it* decides one is needed | Who initiates the request |
+
+So when you build an MCP server with Spring AI, think: *"I'm writing a
+`@RestController`, except the 'endpoints' are `@Tool` methods, the 'API docs' are
+generated automatically from my method signatures, and the 'client' calling me is an AI
+application."*
+
+The one crucial difference is the last row — **who decides to make the call**:
+
+- **With REST**, *you* write the code that decides when to call the API and with what
+  parameters.
+- **With MCP**, the *LLM* makes that decision at runtime — it reads the tool
+  descriptions (its "API documentation") and chooses which tool to call based on the
+  user's question.
+- **That's why good tool names and descriptions matter** as much as good REST API docs:
+  they're what the "client developer" (here, the model) reads to figure out how to use
+  you.
 
 ### Where Spring AI fits
 
