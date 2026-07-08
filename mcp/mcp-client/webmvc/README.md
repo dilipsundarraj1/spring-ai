@@ -1,5 +1,5 @@
 <!-- TOC -->
-* [MCP Weather Client (WebMVC)](#mcp-weather-client-webmvc)
+* [MCP Client (WebMVC)](#mcp-client-webmvc)
   * [How it works](#how-it-works)
     * [From YAML to `ToolCallbackProvider`](#from-yaml-to-toolcallbackprovider)
     * [How it all fits together](#how-it-all-fits-together)
@@ -16,15 +16,15 @@
   * [Troubleshooting](#troubleshooting)
 <!-- TOC -->
 
-# MCP Weather Client (WebMVC)
+# MCP Client (WebMVC)
 
 
-A Spring Boot MCP **client** that connects to the [MCP Weather Server (WebMVC)](../../mcp-server/webmvc) over **Streamable HTTP** and exposes the server's weather tools to an OpenAI-backed `ChatClient`.
+A Spring Boot MCP **client** that connects to two MCP servers over **Streamable HTTP** — the [MCP Weather Server](../../mcp-server/webflux) (port **8081**) and the [Currency Converter MCP Server](../../mcp-server/currency-converter-mcp) (port **8082**) — and exposes their tools to a single OpenAI-backed `ChatClient`.
 
 ## How it works
 
-- Uses the default [`spring-ai-starter-mcp-client`](https://docs.spring.io/spring-ai/reference/api/mcp/mcp-client-boot-starter-docs.html) Boot starter with a `SYNC` client.
-- Connects to the weather server at `http://localhost:8080/mcp` (see `application.yml`):
+- Uses the default [`spring-ai-starter-mcp-client`](https://docs.spring.io/spring-ai/reference/api/mcp/mcp-client-boot-starter-docs.html) Boot starter with `SYNC` clients.
+- Connects to the weather server and the currency converter (see `application.yml`):
 
 ```yaml
 spring:
@@ -35,11 +35,14 @@ spring:
         streamable-http:
           connections:
             weather-server:
-              url: http://localhost:8080
+              url: http://localhost:8081
+              endpoint: /mcp
+            currency-converter:
+              url: http://localhost:8082
               endpoint: /mcp
 ```
 
-- The starter auto-discovers the server's tools (`getWeatherForecastByLocation`, `getForecastWeatherByLocation`) and exposes them as a `ToolCallbackProvider`, which `ChatController` registers on the `ChatClient` via `defaultTools(...)`.
+- The starter creates one `McpSyncClient` **per connection entry**, auto-discovers every server's tools (`getWeatherForecastByLocation` and `getForecastWeatherByLocation` from the weather server, `getCurrencyRates` from the currency converter), and merges them all into a single `ToolCallbackProvider`, which `ChatController` registers on the `ChatClient` via `defaultTools(...)`. The LLM sees one flat tool list and picks the right server's tool per question.
 - On startup, `McpClientApplication` logs the tools discovered from every connected MCP server.
 
 ### From YAML to `ToolCallbackProvider`
@@ -48,8 +51,8 @@ The `mcpToolCallbackProvider` injected into `ChatController` is wired up entirel
 
 - **Connections → `McpSyncClient` beans**
   - Each entry under `spring.ai.mcp.client.streamable-http.connections` produces one MCP client.
-  - The single `weather-server` entry creates an `McpSyncClient` (because `type: SYNC`).
-  - On startup, that client performs the MCP `initialize` handshake against `http://localhost:8080/mcp`.
+  - The two entries — `weather-server` and `currency-converter` — create two `McpSyncClient`s (because `type: SYNC`).
+  - On startup, each client performs the MCP `initialize` handshake against its own server: `http://localhost:8081/mcp` and `http://localhost:8082/mcp`.
   - `name` / `version` are sent as the client info; `request-timeout` applies to every call.
 
 - **Clients → one `ToolCallbackProvider` bean**
@@ -74,25 +77,30 @@ sequenceDiagram
     participant U as curl
     participant C as MCP Client<br/>(:9000)
     participant L as LLM Provider<br/>(OpenAI / Gemini)
-    participant S as MCP Server<br/>(:8080)
-    participant W as weatherapi.com
+    participant S as Weather MCP Server<br/>(:8081)
+    participant X as Currency MCP Server<br/>(:8082)
 
     rect rgb(240, 240, 240)
-        Note over C,S: Startup — MCP client auto-configuration
-        C->>S: initialize (MCP handshake)
-        C->>S: tools/list
-        S-->>C: 2 weather tools → ToolCallbackProvider
+        Note over C,X: Startup — one McpSyncClient per connection entry
+        C->>S: initialize + tools/list
+        S-->>C: 2 weather tools
+        C->>X: initialize + tools/list
+        X-->>C: getCurrencyRates
+        Note over C: all tools merged into one ToolCallbackProvider
     end
 
     U->>C: GET /chat?question=...
-    C->>L: prompt + tool schemas
+    C->>L: prompt + tool schemas (from both servers)
 
     loop until the model has all the data it needs
-        L-->>C: tool call request (e.g. getWeatherForecastByLocation)
-        C->>S: tools/call (Streamable HTTP POST /mcp)
-        S->>W: GET /current.json or /forecast.json
-        W-->>S: weather data
-        S-->>C: tool result
+        L-->>C: tool call request
+        alt weather question (e.g. getWeatherForecastByLocation)
+            C->>S: tools/call (Streamable HTTP POST /mcp)
+            S-->>C: weather data (via weatherapi.com)
+        else currency question (getCurrencyRates)
+            C->>X: tools/call (Streamable HTTP POST /mcp)
+            X-->>C: exchange rates (via openexchangerates.org)
+        end
         C->>L: tool result
     end
 
@@ -100,10 +108,10 @@ sequenceDiagram
     C-->>U: response
 ```
 
-- The **startup block** happens once: the auto-configured `McpSyncClient` does the MCP handshake and tool discovery that feeds the `ToolCallbackProvider`.
-- Everything after it happens **per request**: the client sends the question *plus* the discovered tool schemas to the LLM; the LLM never talks to the MCP server directly — it only *asks* the client to run a tool.
-- The **loop** repeats if the model decides to call more tools (e.g. the forecast tool as well).
-- All client ↔ server traffic is JSON-RPC over Streamable HTTP `POST http://localhost:8080/mcp`.
+- The **startup block** happens once: each auto-configured `McpSyncClient` does the MCP handshake and tool discovery, and the tools from both servers feed one `ToolCallbackProvider`.
+- Everything after it happens **per request**: the client sends the question *plus* the discovered tool schemas to the LLM; the LLM never talks to the MCP servers directly — it only *asks* the client to run a tool, and the client routes the call to whichever server owns that tool.
+- The **loop** repeats if the model decides to call more tools (e.g. weather *and* currency in one question).
+- All client ↔ server traffic is JSON-RPC over Streamable HTTP: `POST http://localhost:8081/mcp` for weather, `POST http://localhost:8082/mcp` for currency.
 
 ##  Stateful by default
 
@@ -207,24 +215,34 @@ sequenceDiagram
 
 ## Running
 
-1. Start the weather server (in another terminal):
+1. Start the weather server (in another terminal, listens on **8081**):
 
    ```bash
-   WEATHER_API_KEY=<your-weatherapi-key> ./gradlew :mcp:mcp-server:webmvc:bootRun
+   WEATHER_API_KEY=<your-weatherapi-key> ./gradlew :mcp:mcp-server:webflux:bootRun
    ```
 
-2. Start this client (listens on port **9000**):
+   > The client is configured for the WebFlux weather server on port 8081. To use the [WebMVC weather server](../../mcp-server/webmvc) (port 8080) instead, run `:mcp:mcp-server:webmvc:bootRun` and change the `weather-server` `url` in `application.yml` to `http://localhost:8080` — both servers expose the same tools.
+
+2. Start the currency converter server (in another terminal, listens on **8082**):
+
+   ```bash
+   CURRENCY_EXCHANGE_API_KEY=<your-openexchangerates-key> ./gradlew :mcp:mcp-server:currency-converter-mcp:bootRun
+   ```
+
+3. Start this client (listens on port **9000**):
 
    ```bash
    OPENAI_KEY=<your-openai-key> ./gradlew :mcp:mcp-client:webmvc:bootRun
    ```
 
-3. Ask a weather question — the LLM decides which MCP tool to call:
+4. Ask a question — the LLM decides which MCP server's tool to call:
 
    ```bash
    curl -G http://localhost:9000/chat --data-urlencode "question=What is the current weather in New York?"
 
    curl -G http://localhost:9000/chat --data-urlencode "question=Give me a 5 day forecast for Dallas"
+
+   curl -G http://localhost:9000/chat --data-urlencode "question=How much is 100 USD in EUR?"
    ```
 
 ## Troubleshooting

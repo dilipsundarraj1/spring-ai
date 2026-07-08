@@ -4,9 +4,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.tool.ToolCallbackProvider;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 @RestController
 public class ChatController {
@@ -17,13 +20,14 @@ public class ChatController {
 
 	/**
 	 * The injected {@link ToolCallbackProvider} is auto-configured by
-	 * spring-ai-starter-mcp-client from the spring.ai.mcp.client.* properties:
+	 * spring-ai-starter-mcp-client-webflux from the spring.ai.mcp.client.* properties:
 	 * <ol>
 	 * <li>Each entry under spring.ai.mcp.client.streamable-http.connections (here:
-	 * "weather-server" -> {@code http://localhost:8080/mcp}) becomes an McpSyncClient bean
-	 * (type: SYNC) that performs the MCP initialize handshake on startup.</li>
+	 * "weather-server" -> {@code http://localhost:8081/mcp}) becomes an McpAsyncClient
+	 * bean (type: ASYNC) that performs the MCP initialize handshake on startup. The
+	 * WebFlux starter uses a non-blocking WebClient-based streamable HTTP transport.</li>
 	 * <li>Because spring.ai.mcp.client.toolcallback.enabled defaults to true, the
-	 * starter wraps all McpSyncClients in a single SyncMcpToolCallbackProvider bean,
+	 * starter wraps all McpAsyncClients in a single AsyncMcpToolCallbackProvider bean,
 	 * which lists the tools each server exposes (tools/list) and adapts every MCP tool
 	 * into a Spring AI ToolCallback.</li>
 	 * <li>Registering that provider via defaultTools(...) hands the tool definitions to
@@ -40,12 +44,24 @@ public class ChatController {
 	}
 
 	@GetMapping("/chat")
-	public String chat(@RequestParam String question) {
+	public Mono<String> chat(@RequestParam String question) {
 		log.info("Chat question: {}", question);
 
 		return chatClient.prompt()
 			.user(question)
-			.call()
+			.stream()
+			.content()
+			.collectList()
+			.map(chunks -> String.join("", chunks));
+	}
+
+	@GetMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+	public Flux<String> chatStream(@RequestParam String question) {
+		log.info("Chat stream question: {}", question);
+
+		return chatClient.prompt()
+			.user(question)
+			.stream()
 			.content();
 	}
 

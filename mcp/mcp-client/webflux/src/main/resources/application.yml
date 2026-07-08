@@ -1,5 +1,5 @@
 server:
-  port: 9000
+  port: 9001
 
 spring:
   ai:
@@ -10,9 +10,9 @@ spring:
           model: gpt-5.5
     mcp:
       client:
-        name: my-weather-client-webmvc
+        name: my-weather-client-webflux
         version: 0.0.1
-        type: SYNC
+        type: ASYNC
         request-timeout: 30s
         streamable-http:
           connections:
