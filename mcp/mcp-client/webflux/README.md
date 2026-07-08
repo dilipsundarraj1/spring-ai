@@ -2,8 +2,10 @@
 * [MCP Client (WebFlux)](#mcp-client-webflux)
   * [How it differs from the WebMVC client](#how-it-differs-from-the-webmvc-client)
   * [How it works](#how-it-works)
+    * [Architecture at a glance](#architecture-at-a-glance)
     * [From YAML to `ToolCallbackProvider`](#from-yaml-to-toolcallbackprovider)
     * [Reactive endpoints](#reactive-endpoints)
+  * [Where MCP shines: new capabilities without new integration code](#where-mcp-shines-new-capabilities-without-new-integration-code)
   * [Running](#running)
   * [Troubleshooting](#troubleshooting)
 <!-- TOC -->
@@ -50,6 +52,29 @@ spring:
 - The starter creates one `McpAsyncClient` **per connection entry**, auto-discovers every server's tools (`getWeatherForecastByLocation` and `getForecastWeatherByLocation` from the weather server, `getCurrencyRates` from the currency converter), and merges them all into a single `ToolCallbackProvider`, which `ChatController` registers on the `ChatClient` via `defaultTools(...)`. The LLM sees one flat tool list and picks the right server's tool per question — adding another server is just another `connections:` entry, no code changes.
 - On startup, `McpClientApplication` logs the tools discovered from every connected MCP server — reactively, via `McpAsyncClient.listTools()` which returns a `Mono`.
 
+### Architecture at a glance
+
+```mermaid
+flowchart LR
+    U["curl"] -- "GET /chat<br/>GET /chat/stream (SSE)" --> CC
+
+    subgraph APP["MCP Client (WebFlux, :9001, Netty)"]
+        CC["ChatController<br/>Mono / Flux"] --> CH["ChatClient"]
+        CH --> TP["AsyncMcpToolCallbackProvider<br/>one flat tool list"]
+    end
+
+    CH <-- "prompt + tool schemas<br/>token stream back" --> LLM["OpenAI LLM"]
+
+    TP -- "tools/call<br/>Streamable HTTP :8081/mcp<br/>(non-blocking WebClient)" --> WS["Weather MCP Server"]
+    TP -- "tools/call<br/>Streamable HTTP :8082/mcp<br/>(non-blocking WebClient)" --> XS["Currency MCP Server"]
+
+    WS --> WA["weatherapi.com"]
+    XS --> OX["openexchangerates.org"]
+```
+
+- The `ChatClient` sends every question to the LLM together with the tool schemas discovered from **both** servers; when the LLM asks for a tool, the provider routes the `tools/call` to whichever MCP server owns it.
+- Nothing in this pipeline blocks: MCP calls ride a reactive `WebClient`, and on `/chat/stream` the LLM's tokens flow straight through to the caller as Server-Sent Events.
+
 ### From YAML to `ToolCallbackProvider`
 
 Same auto-configuration flow as the WebMVC client, with the async variants swapped in:
@@ -72,6 +97,31 @@ The controller never blocks:
 
 - `GET /chat` — streams the model's answer internally and aggregates it into a single `Mono<String>` response.
 - `GET /chat/stream` — returns the answer as it is generated, token by token, as a `Flux<String>` over Server-Sent Events. This is the natural fit for the reactive stack: LLM tokens flow from OpenAI through the client to the caller without buffering.
+
+## Where MCP shines: new capabilities without new integration code
+
+The currency converter was added to this client **without touching a line of Java** — the entire integration is three lines of YAML:
+
+```diff
+ spring:
+   ai:
+     mcp:
+       client:
+         streamable-http:
+           connections:
+             weather-server:
+               url: http://localhost:8081
+               endpoint: /mcp
++            currency-converter:
++              url: http://localhost:8082
++              endpoint: /mcp
+```
+
+- **No client-side code** — no HTTP client for openexchangerates.org, no DTOs, no `@Tool` method, no recompile.
+- **Discovery instead of hardcoding** — each server *describes its own tools* over `tools/list` at startup, so the client discovers new capabilities instead of being coded against them.
+- **Works for any server** — the same three lines would plug in any third-party MCP server you didn't write (GitHub, Slack, a database, …).
+
+See the [WebMVC client's section](../webmvc/README.md#where-mcp-shines-new-capabilities-without-new-integration-code) for the full discussion of why this works.
 
 ## Running
 

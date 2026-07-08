@@ -1,8 +1,10 @@
 <!-- TOC -->
 * [MCP Client (WebMVC)](#mcp-client-webmvc)
   * [How it works](#how-it-works)
+    * [Architecture at a glance](#architecture-at-a-glance)
     * [From YAML to `ToolCallbackProvider`](#from-yaml-to-toolcallbackprovider)
     * [How it all fits together](#how-it-all-fits-together)
+  * [Where MCP shines: new capabilities without new integration code](#where-mcp-shines-new-capabilities-without-new-integration-code)
   * [Stateful by default](#stateful-by-default)
     * [How the session works](#how-the-session-works)
     * [What a stateful session buys you](#what-a-stateful-session-buys-you)
@@ -45,6 +47,30 @@ spring:
 - The starter creates one `McpSyncClient` **per connection entry**, auto-discovers every server's tools (`getWeatherForecastByLocation` and `getForecastWeatherByLocation` from the weather server, `getCurrencyRates` from the currency converter), and merges them all into a single `ToolCallbackProvider`, which `ChatController` registers on the `ChatClient` via `defaultTools(...)`. The LLM sees one flat tool list and picks the right server's tool per question.
 - On startup, `McpClientApplication` logs the tools discovered from every connected MCP server.
 
+### Architecture at a glance
+
+```mermaid
+flowchart LR
+    U["curl"] -- "GET /chat?question=..." --> CC
+
+    subgraph APP["MCP Client (WebMVC, :9000)"]
+        CC["ChatController"] --> CH["ChatClient"]
+        CH --> TP["ToolCallbackProvider<br/>one flat tool list"]
+    end
+
+    CH <-- "prompt + tool schemas<br/>tool-call requests" --> LLM["OpenAI LLM"]
+
+    TP -- "tools/call<br/>Streamable HTTP :8081/mcp" --> WS["Weather MCP Server"]
+    TP -- "tools/call<br/>Streamable HTTP :8082/mcp" --> XS["Currency MCP Server"]
+
+    WS --> WA["weatherapi.com"]
+    XS --> OX["openexchangerates.org"]
+```
+
+- The `ChatClient` sends every question to the LLM together with the tool schemas discovered from **both** servers.
+- When the LLM asks for a tool, the `ToolCallbackProvider` routes the `tools/call` to whichever MCP server owns that tool — the controller has no idea (and doesn't care) which server answers.
+- Each server keeps its own upstream API and credentials to itself; the client never talks to weatherapi.com or openexchangerates.org directly.
+
 ### From YAML to `ToolCallbackProvider`
 
 The `mcpToolCallbackProvider` injected into `ChatController` is wired up entirely by the starter's auto-configuration:
@@ -67,7 +93,7 @@ The `mcpToolCallbackProvider` injected into `ChatController` is wired up entirel
   - When the model picks a tool, the callback issues an MCP `tools/call` over the same streamable HTTP connection and returns the result to the model.
 
 - **Adding another server**
-  - Just add another entry under `connections:` — its tools automatically show up in the same provider, no code changes needed.
+  - Just add another entry under `connections:` — its tools automatically show up in the same provider, no code changes needed (see [Where MCP shines](#where-mcp-shines-new-capabilities-without-new-integration-code)).
 
 ### How it all fits together
 
@@ -112,6 +138,34 @@ sequenceDiagram
 - Everything after it happens **per request**: the client sends the question *plus* the discovered tool schemas to the LLM; the LLM never talks to the MCP servers directly — it only *asks* the client to run a tool, and the client routes the call to whichever server owns that tool.
 - The **loop** repeats if the model decides to call more tools (e.g. weather *and* currency in one question).
 - All client ↔ server traffic is JSON-RPC over Streamable HTTP: `POST http://localhost:8081/mcp` for weather, `POST http://localhost:8082/mcp` for currency.
+
+## Where MCP shines: new capabilities without new integration code
+
+The currency converter was added to this client **without touching a line of Java**. The entire integration is three lines of YAML:
+
+```diff
+ spring:
+   ai:
+     mcp:
+       client:
+         streamable-http:
+           connections:
+             weather-server:
+               url: http://localhost:8081
+               endpoint: /mcp
++            currency-converter:
++              url: http://localhost:8082
++              endpoint: /mcp
+```
+
+A traditional integration would have meant writing an HTTP client for openexchangerates.org, modeling its request/response DTOs, handling auth and errors, writing a `@Tool` method with a schema so the LLM can call it — and recompiling and redeploying the client. With MCP, none of that lives in the client. Why it works:
+
+- **Discovery instead of hardcoding** — at startup the client calls `tools/list` and each server *describes its own tools*: names, descriptions, and JSON input schemas. The client needs no compile-time knowledge of what a server offers.
+- **One uniform protocol** — every server speaks the same JSON-RPC over Streamable HTTP, so a new server adds zero new protocol code on the client side.
+- **The server owns its domain** — API keys and upstream quirks (weatherapi.com vs. openexchangerates.org) stay inside each server; the client and the LLM only ever see clean tool schemas.
+- **Server upgrades are client-free** — a server can add or change tools and clients pick them up on the next startup (or live, via `tools/list_changed` notifications in stateful mode) with no client changes.
+
+The same three lines would plug in *any* MCP server — including third-party ones (GitHub, Slack, a database, …) you didn't write.
 
 ##  Stateful by default
 
