@@ -30,16 +30,20 @@ public class ChatController {
 	 * starter wraps all McpAsyncClients in a single AsyncMcpToolCallbackProvider bean,
 	 * which lists the tools each server exposes (tools/list) and adapts every MCP tool
 	 * into a Spring AI ToolCallback.</li>
-	 * <li>Registering that provider via defaultTools(...) hands the tool definitions to
-	 * the LLM; when the model picks one, the callback forwards the call to the server
-	 * (tools/call) over the same streamable HTTP connection.</li>
+	 * <li>Registering those callbacks via defaultToolCallbacks(...) hands the tool
+	 * definitions to the LLM; when the model picks one, the callback forwards the call
+	 * to the server (tools/call) over the same streamable HTTP connection.</li>
 	 * </ol>
+	 * The callbacks are resolved once here rather than per request: the async provider's
+	 * getToolCallbacks() blocks on tools/list, which is fine on the startup thread but
+	 * would throw if deferred onto a Netty event-loop thread (as defaultTools(provider)
+	 * does).
 	 */
 	public ChatController(ChatClient.Builder builder, ToolCallbackProvider mcpToolCallbackProvider) {
 		this.chatClient = builder
 			.defaultSystem("You are a helpful assistant. Use the available tools to answer questions "
 					+ "about the current weather, weather forecasts, and currency conversions.")
-			.defaultTools(mcpToolCallbackProvider)
+			.defaultToolCallbacks(mcpToolCallbackProvider.getToolCallbacks())
 			.build();
 	}
 

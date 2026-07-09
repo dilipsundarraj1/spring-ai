@@ -79,8 +79,7 @@ public class LlamaChatController {
         var chatOptions = ChatOptions
                 .builder()
                 .temperature(temperature)
-                .maxTokens(maxTokens)
-                .build();
+                .maxTokens(maxTokens);
 
         var chatClient1 = chatClient.mutate()
                 .defaultOptions(chatOptions)

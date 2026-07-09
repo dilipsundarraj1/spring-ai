@@ -49,7 +49,7 @@ spring:
               endpoint: /mcp
 ```
 
-- The starter creates one `McpAsyncClient` **per connection entry**, auto-discovers every server's tools (`getWeatherForecastByLocation` and `getForecastWeatherByLocation` from the weather server, `getCurrencyRates` from the currency converter), and merges them all into a single `ToolCallbackProvider`, which `ChatController` registers on the `ChatClient` via `defaultTools(...)`. The LLM sees one flat tool list and picks the right server's tool per question — adding another server is just another `connections:` entry, no code changes.
+- The starter creates one `McpAsyncClient` **per connection entry**, auto-discovers every server's tools (`getWeatherForecastByLocation` and `getForecastWeatherByLocation` from the weather server, `getCurrencyRates` from the currency converter), and merges them all into a single `ToolCallbackProvider`, whose callbacks `ChatController` registers on the `ChatClient` via `defaultToolCallbacks(...)` (resolved once at startup — the async provider blocks on `tools/list`, which is not allowed on a Netty event-loop thread). The LLM sees one flat tool list and picks the right server's tool per question — adding another server is just another `connections:` entry, no code changes.
 - On startup, `McpClientApplication` logs the tools discovered from every connected MCP server — reactively, via `McpAsyncClient.listTools()` which returns a `Mono`.
 
 ### Architecture at a glance
@@ -89,7 +89,7 @@ Same auto-configuration flow as the WebMVC client, with the async variants swapp
   - The provider calls `tools/list` on each server and adapts every MCP tool into a Spring AI `ToolCallback`.
 
 - **Provider → `ChatClient` → LLM**
-  - `ChatController` registers the provider via `defaultTools(...)`; when the model picks a tool, the callback issues an MCP `tools/call` over the same streamable HTTP connection — without blocking an event-loop thread.
+  - `ChatController` resolves the provider's callbacks once at startup and registers them via `defaultToolCallbacks(...)`; when the model picks a tool, the callback issues an MCP `tools/call` over the same streamable HTTP connection — without blocking an event-loop thread.
 
 ### Reactive endpoints
 
