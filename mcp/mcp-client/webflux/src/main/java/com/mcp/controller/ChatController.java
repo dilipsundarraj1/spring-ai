@@ -1,5 +1,6 @@
 package com.mcp.controller;
 
+import com.mcp.logging.LoggingToolCallback;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -30,20 +31,22 @@ public class ChatController {
 	 * starter wraps all McpAsyncClients in a single AsyncMcpToolCallbackProvider bean,
 	 * which lists the tools each server exposes (tools/list) and adapts every MCP tool
 	 * into a Spring AI ToolCallback.</li>
-	 * <li>Registering those callbacks via defaultToolCallbacks(...) hands the tool
-	 * definitions to the LLM; when the model picks one, the callback forwards the call
-	 * to the server (tools/call) over the same streamable HTTP connection.</li>
+	 * <li>Registering those callbacks via defaultTools(...) hands the tool definitions to
+	 * the LLM; when the model picks one, the callback forwards the call to the server
+	 * (tools/call) over the same streamable HTTP connection.</li>
 	 * </ol>
 	 * The callbacks are resolved once here rather than per request: the async provider's
 	 * getToolCallbacks() blocks on tools/list, which is fine on the startup thread but
 	 * would throw if deferred onto a Netty event-loop thread (as defaultTools(provider)
-	 * does).
+	 * does). Each callback is wrapped in a {@link LoggingToolCallback} so every tool
+	 * invocation the LLM makes is logged with its input, result, and timing.
 	 */
 	public ChatController(ChatClient.Builder builder, ToolCallbackProvider mcpToolCallbackProvider) {
 		this.chatClient = builder
 			.defaultSystem("You are a helpful assistant. Use the available tools to answer questions "
-					+ "about the current weather, weather forecasts, and currency conversions.")
-			.defaultToolCallbacks(mcpToolCallbackProvider.getToolCallbacks())
+					+ "about the current weather, weather forecasts, currency conversions, "
+					+ "and the electronics store's product inventory (stock levels, prices, and availability).")
+			.defaultTools((Object[]) LoggingToolCallback.wrapAll(mcpToolCallbackProvider.getToolCallbacks()))
 			.build();
 	}
 

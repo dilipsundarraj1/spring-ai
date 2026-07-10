@@ -1,0 +1,29 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: inventory-mcp-server
+  ai:
+    mcp:
+      server:
+        name: inventory-mcp-server
+        version: 0.0.1
+        type: SYNC
+        protocol: STREAMABLE
+        streamable-http:
+          mcp-endpoint: /mcp
+  datasource:
+    url: jdbc:h2:mem:inventorydb
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    # Let Hibernate create the schema before data.sql seeds it.
+    defer-datasource-initialization: true
+  h2:
+    console:
+      enabled: true
+      path: /h2-console

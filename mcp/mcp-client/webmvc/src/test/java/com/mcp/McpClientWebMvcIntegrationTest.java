@@ -4,6 +4,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import com.fakeservers.FakeCurrencyMcpServer;
+import com.fakeservers.FakeInventoryMcpServer;
 import com.fakeservers.FakeWeatherMcpServer;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.stubbing.Scenario;
@@ -31,10 +32,10 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.options
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Boots the client app against two in-process fake MCP servers (weather + currency, see
- * {@link FakeWeatherMcpServer} and {@link FakeCurrencyMcpServer}) so the real MCP
- * handshake, tools/list discovery, and tools/call routing all run over real Streamable
- * HTTP. The OpenAI chat completions API is replaced by a WireMock stub, so the /chat
+ * Boots the client app against three in-process fake MCP servers (weather + currency +
+ * inventory, see {@link FakeWeatherMcpServer}, {@link FakeCurrencyMcpServer} and
+ * {@link FakeInventoryMcpServer}) so the real MCP handshake, tools/list discovery, and
+ * tools/call routing all run over real Streamable HTTP. The OpenAI chat completions API is replaced by a WireMock stub, so the /chat
  * endpoint — including a full LLM tool-call loop — is covered deterministically without
  * an API key or network access.
  */
@@ -47,6 +48,8 @@ class McpClientWebMvcIntegrationTest {
 	private static ConfigurableApplicationContext weatherServer;
 
 	private static ConfigurableApplicationContext currencyServer;
+
+	private static ConfigurableApplicationContext inventoryServer;
 
 	@LocalServerPort
 	int port;
@@ -61,11 +64,14 @@ class McpClientWebMvcIntegrationTest {
 		openAi.start();
 		weatherServer = startFakeMcpServer(FakeWeatherMcpServer.class, "fake-weather-server");
 		currencyServer = startFakeMcpServer(FakeCurrencyMcpServer.class, "fake-currency-server");
+		inventoryServer = startFakeMcpServer(FakeInventoryMcpServer.class, "fake-inventory-server");
 
 		registry.add("spring.ai.mcp.client.streamable-http.connections.weather-server.url",
 				() -> baseUrl(weatherServer));
 		registry.add("spring.ai.mcp.client.streamable-http.connections.currency-converter.url",
 				() -> baseUrl(currencyServer));
+		registry.add("spring.ai.mcp.client.streamable-http.connections.inventory-server.url",
+				() -> baseUrl(inventoryServer));
 		registry.add("spring.ai.openai.base-url", openAi::baseUrl);
 		registry.add("spring.ai.openai.api-key", () -> "test-api-key");
 	}
@@ -75,6 +81,7 @@ class McpClientWebMvcIntegrationTest {
 		openAi.resetAll();
 		FakeWeatherMcpServer.invocations.clear();
 		FakeCurrencyMcpServer.invocations.clear();
+		FakeInventoryMcpServer.invocations.clear();
 	}
 
 	@AfterAll
@@ -85,15 +92,20 @@ class McpClientWebMvcIntegrationTest {
 		if (currencyServer != null) {
 			currencyServer.close();
 		}
+		if (inventoryServer != null) {
+			inventoryServer.close();
+		}
 		openAi.stop();
 	}
 
 	@Test
-	void discoversToolsFromBothMcpServers() {
+	void discoversToolsFromAllMcpServers() {
 		assertThat(toolNames())
 			.anyMatch(name -> name.contains("getWeatherForecastByLocation"))
 			.anyMatch(name -> name.contains("getForecastWeatherByLocation"))
-			.anyMatch(name -> name.contains("getCurrencyRates"));
+			.anyMatch(name -> name.contains("getCurrencyRates"))
+			.anyMatch(name -> name.contains("searchInventoryItemsByProductName"))
+			.anyMatch(name -> name.contains("getAllInventoryItems"));
 	}
 
 	@Test
@@ -112,6 +124,16 @@ class McpClientWebMvcIntegrationTest {
 		assertThat(result).contains("STUB-RATES USD");
 		assertThat(FakeCurrencyMcpServer.invocations).containsExactly("getCurrencyRates:USD");
 		assertThat(FakeWeatherMcpServer.invocations).isEmpty();
+	}
+
+	@Test
+	void routesToolCallsToTheInventoryServer() {
+		var result = toolNamed("searchInventoryItemsByProductName").call("{\"productName\": \"iphone\"}");
+
+		assertThat(result).contains("STUB-INVENTORY iphone");
+		assertThat(FakeInventoryMcpServer.invocations).containsExactly("searchInventoryItemsByProductName:iphone");
+		assertThat(FakeWeatherMcpServer.invocations).isEmpty();
+		assertThat(FakeCurrencyMcpServer.invocations).isEmpty();
 	}
 
 	@Test

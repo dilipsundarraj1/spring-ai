@@ -21,12 +21,12 @@
 # MCP Client (WebMVC)
 
 
-A Spring Boot MCP **client** that connects to two MCP servers over **Streamable HTTP** — the [MCP Weather Server](../../mcp-server/webflux) (port **8081**) and the [Currency Converter MCP Server](../../mcp-server/currency-converter-mcp) (port **8082**) — and exposes their tools to a single OpenAI-backed `ChatClient`.
+A Spring Boot MCP **client** that connects to three MCP servers over **Streamable HTTP** — the [MCP Weather Server](../../mcp-server/webflux) (port **8081**), the [Currency Converter MCP Server](../../mcp-server/currency-converter-mcp) (port **8082**) and the [Inventory MCP Server](../../mcp-server/inventory-mcp-server) (port **8083**) — and exposes their tools to a single OpenAI-backed `ChatClient`.
 
 ## How it works
 
 - Uses the default [`spring-ai-starter-mcp-client`](https://docs.spring.io/spring-ai/reference/api/mcp/mcp-client-boot-starter-docs.html) Boot starter with `SYNC` clients.
-- Connects to the weather server and the currency converter (see `application.yml`):
+- Connects to the weather server, the currency converter and the inventory server (see `application.yml`):
 
 ```yaml
 spring:
@@ -42,9 +42,12 @@ spring:
             currency-converter:
               url: http://localhost:8082
               endpoint: /mcp
+            inventory-server:
+              url: http://localhost:8083
+              endpoint: /mcp
 ```
 
-- The starter creates one `McpSyncClient` **per connection entry**, auto-discovers every server's tools (`getWeatherForecastByLocation` and `getForecastWeatherByLocation` from the weather server, `getCurrencyRates` from the currency converter), and merges them all into a single `ToolCallbackProvider`, which `ChatController` registers on the `ChatClient` via `defaultTools(...)`. The LLM sees one flat tool list and picks the right server's tool per question.
+- The starter creates one `McpSyncClient` **per connection entry**, auto-discovers every server's tools (`getWeatherForecastByLocation` and `getForecastWeatherByLocation` from the weather server, `getCurrencyRates` from the currency converter, and the four inventory lookup tools such as `searchInventoryItemsByProductName` from the inventory server), and merges them all into a single `ToolCallbackProvider`, which `ChatController` registers on the `ChatClient` via `defaultTools(...)`. The LLM sees one flat tool list and picks the right server's tool per question.
 - On startup, `McpClientApplication` logs the tools discovered from every connected MCP server.
 
 ### Architecture at a glance
@@ -62,14 +65,16 @@ flowchart LR
 
     TP -- "tools/call<br/>Streamable HTTP :8081/mcp" --> WS["Weather MCP Server"]
     TP -- "tools/call<br/>Streamable HTTP :8082/mcp" --> XS["Currency MCP Server"]
+    TP -- "tools/call<br/>Streamable HTTP :8083/mcp" --> IS["Inventory MCP Server"]
 
     WS --> WA["weatherapi.com"]
     XS --> OX["openexchangerates.org"]
+    IS --> DB[("H2 inventory DB")]
 ```
 
-- The `ChatClient` sends every question to the LLM together with the tool schemas discovered from **both** servers.
+- The `ChatClient` sends every question to the LLM together with the tool schemas discovered from **all** servers.
 - When the LLM asks for a tool, the `ToolCallbackProvider` routes the `tools/call` to whichever MCP server owns that tool — the controller has no idea (and doesn't care) which server answers.
-- Each server keeps its own upstream API and credentials to itself; the client never talks to weatherapi.com or openexchangerates.org directly.
+- Each server keeps its own upstream API, database, and credentials to itself; the client never talks to weatherapi.com, openexchangerates.org, or the inventory database directly.
 
 ### From YAML to `ToolCallbackProvider`
 
@@ -77,8 +82,8 @@ The `mcpToolCallbackProvider` injected into `ChatController` is wired up entirel
 
 - **Connections → `McpSyncClient` beans**
   - Each entry under `spring.ai.mcp.client.streamable-http.connections` produces one MCP client.
-  - The two entries — `weather-server` and `currency-converter` — create two `McpSyncClient`s (because `type: SYNC`).
-  - On startup, each client performs the MCP `initialize` handshake against its own server: `http://localhost:8081/mcp` and `http://localhost:8082/mcp`.
+  - The three entries — `weather-server`, `currency-converter` and `inventory-server` — create three `McpSyncClient`s (because `type: SYNC`).
+  - On startup, each client performs the MCP `initialize` handshake against its own server: `http://localhost:8081/mcp`, `http://localhost:8082/mcp` and `http://localhost:8083/mcp`.
   - `name` / `version` are sent as the client info; `request-timeout` applies to every call.
 
 - **Clients → one `ToolCallbackProvider` bean**
@@ -105,18 +110,21 @@ sequenceDiagram
     participant L as LLM Provider<br/>(OpenAI / Gemini)
     participant S as Weather MCP Server<br/>(:8081)
     participant X as Currency MCP Server<br/>(:8082)
+    participant I as Inventory MCP Server<br/>(:8083)
 
     rect rgb(240, 240, 240)
-        Note over C,X: Startup — one McpSyncClient per connection entry
+        Note over C,I: Startup — one McpSyncClient per connection entry
         C->>S: initialize + tools/list
         S-->>C: 2 weather tools
         C->>X: initialize + tools/list
         X-->>C: getCurrencyRates
+        C->>I: initialize + tools/list
+        I-->>C: 4 inventory tools
         Note over C: all tools merged into one ToolCallbackProvider
     end
 
     U->>C: GET /chat?question=...
-    C->>L: prompt + tool schemas (from both servers)
+    C->>L: prompt + tool schemas (from all servers)
 
     loop until the model has all the data it needs
         L-->>C: tool call request
@@ -126,6 +134,9 @@ sequenceDiagram
         else currency question (getCurrencyRates)
             C->>X: tools/call (Streamable HTTP POST /mcp)
             X-->>C: exchange rates (via openexchangerates.org)
+        else inventory question (e.g. searchInventoryItemsByProductName)
+            C->>I: tools/call (Streamable HTTP POST /mcp)
+            I-->>C: inventory items (from the H2 database)
         end
         C->>L: tool result
     end
@@ -134,10 +145,10 @@ sequenceDiagram
     C-->>U: response
 ```
 
-- The **startup block** happens once: each auto-configured `McpSyncClient` does the MCP handshake and tool discovery, and the tools from both servers feed one `ToolCallbackProvider`.
+- The **startup block** happens once: each auto-configured `McpSyncClient` does the MCP handshake and tool discovery, and the tools from all servers feed one `ToolCallbackProvider`.
 - Everything after it happens **per request**: the client sends the question *plus* the discovered tool schemas to the LLM; the LLM never talks to the MCP servers directly — it only *asks* the client to run a tool, and the client routes the call to whichever server owns that tool.
 - The **loop** repeats if the model decides to call more tools (e.g. weather *and* currency in one question).
-- All client ↔ server traffic is JSON-RPC over Streamable HTTP: `POST http://localhost:8081/mcp` for weather, `POST http://localhost:8082/mcp` for currency.
+- All client ↔ server traffic is JSON-RPC over Streamable HTTP: `POST http://localhost:8081/mcp` for weather, `POST http://localhost:8082/mcp` for currency, `POST http://localhost:8083/mcp` for inventory.
 
 ## Where MCP shines: new capabilities without new integration code
 
@@ -283,13 +294,19 @@ sequenceDiagram
    CURRENCY_EXCHANGE_API_KEY=<your-openexchangerates-key> ./gradlew :mcp:mcp-server:currency-converter-mcp:bootRun
    ```
 
-3. Start this client (listens on port **9000**):
+3. Start the inventory server (in another terminal, listens on **8083** — no API key needed):
+
+   ```bash
+   ./gradlew :mcp:mcp-server:inventory-mcp-server:bootRun
+   ```
+
+4. Start this client (listens on port **9000**):
 
    ```bash
    OPENAI_KEY=<your-openai-key> ./gradlew :mcp:mcp-client:webmvc:bootRun
    ```
 
-4. Ask a question — the LLM decides which MCP server's tool to call:
+5. Ask a question — the LLM decides which MCP server's tool to call:
 
    ```bash
    curl -G http://localhost:9000/chat --data-urlencode "question=What is the current weather in New York?"
@@ -297,6 +314,13 @@ sequenceDiagram
    curl -G http://localhost:9000/chat --data-urlencode "question=Give me a 5 day forecast for Dallas"
 
    curl -G http://localhost:9000/chat --data-urlencode "question=How much is 100 USD in EUR?"
+
+   curl -G http://localhost:9000/chat --data-urlencode "question=Do we have any iPhones in stock?"
+
+   curl -G http://localhost:9000/chat --data-urlencode "question=Which laptops do we carry and what do they cost?"
+
+   # one question, two MCP servers: inventory price + currency conversion
+   curl -G http://localhost:9000/chat --data-urlencode "question=How much does the iPhone 16 Pro cost in EUR?"
    ```
 
 ## Troubleshooting

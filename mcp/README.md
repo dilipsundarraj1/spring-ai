@@ -16,7 +16,11 @@ contain working Spring AI examples of everything described here.
   * [5. What can an MCP server offer?](#5-what-can-an-mcp-server-offer)
   * [6. How it works: a tool call, step by step](#6-how-it-works-a-tool-call-step-by-step)
   * [7. How AI benefits from MCP servers](#7-how-ai-benefits-from-mcp-servers)
-  * [8. Key takeaways](#8-key-takeaways)
+  * [8. Testing MCP servers with MCP Inspector](#8-testing-mcp-servers-with-mcp-inspector)
+    * [Starting the Inspector](#starting-the-inspector)
+    * [Connecting to the servers in this repo](#connecting-to-the-servers-in-this-repo)
+    * [Exercising a tool](#exercising-a-tool)
+  * [9. Key takeaways](#9-key-takeaways)
   * [Further reading](#further-reading)
 <!-- TOC -->
 
@@ -323,7 +327,83 @@ Why does all this matter? Because MCP servers transform what an AI can do:
    handling). Each side can evolve independently — the same reason we love microservices
    and well-defined APIs.
 
-## 8. Key takeaways
+## 8. Testing MCP servers with MCP Inspector
+
+Just as you'd reach for **Postman** to poke at a REST API before wiring up a real client,
+[**MCP Inspector**](https://github.com/modelcontextprotocol/inspector) is the interactive
+tool for testing MCP servers. It's a browser-based UI (maintained by the MCP project) that
+acts as a full MCP **client**: it connects to your server, lists its tools, lets you call
+them with hand-typed arguments, and shows the raw JSON-RPC messages going back and forth —
+no LLM, no host application, no API keys for a model provider needed.
+
+That makes it the fastest feedback loop while developing a server: you verify the
+*protocol* side (does the server connect? are the tools discovered? do the schemas look
+right? does a call return what you expect?) in isolation, before ever involving a model.
+
+### Starting the Inspector
+
+The Inspector runs via `npx` — no installation needed (Node.js required):
+
+```bash
+npx @modelcontextprotocol/inspector
+```
+
+It starts a local proxy and prints a URL like
+`http://localhost:6274/?MCP_PROXY_AUTH_TOKEN=...` — open that in your browser.
+
+### Connecting to the servers in this repo
+
+How you connect depends on the server's **transport** (each sub-project README has a
+detailed "Testing with MCP Inspector" walkthrough):
+
+- **Streamable HTTP servers** — start the server yourself first (`./gradlew bootRun` in the
+  module), then in the Inspector UI select transport type **Streamable HTTP**, enter the
+  server's URL, and click **Connect**.
+- **STDIO servers** — do *not* start the server yourself. The Inspector launches the jar as
+  a child process (that's how the STDIO transport works), so build the jar first and pass
+  the launch command to the Inspector.
+
+| Server module | Transport | How to connect |
+|---|---|---|
+| [`mcp-server/webmvc`](mcp-server/webmvc) — weather | Streamable HTTP | URL `http://localhost:8080/mcp` |
+| [`mcp-server/webflux`](mcp-server/webflux) — weather | Streamable HTTP | URL `http://localhost:8081/mcp` |
+| [`mcp-server/currency-converter-mcp`](mcp-server/currency-converter-mcp) | Streamable HTTP | URL `http://localhost:8082/mcp` |
+| [`mcp-server/inventory-mcp-server`](mcp-server/inventory-mcp-server) | Streamable HTTP | URL `http://localhost:8083/mcp` |
+| [`mcp-server/stdio`](mcp-server/stdio) — weather | STDIO | Inspector launches the jar (see below) |
+
+For the STDIO weather server, build the jar and let the Inspector spawn it, passing the
+weatherapi.com key with `-e` (run from the repo root, `spring-ai/`):
+
+```bash
+./gradlew :mcp:mcp-server:stdio:bootJar
+npx @modelcontextprotocol/inspector -e WEATHER_API_KEY=<your-weatherapi-key> java -jar mcp/mcp-server/stdio/build/libs/stdio-0.0.2-SNAPSHOT.jar
+```
+
+> ⚠️ **STDIO gotcha:** with STDIO, the protocol runs over the server's stdout, so *any*
+> console output (Spring Boot banner, log lines) corrupts the stream and the Inspector
+> fails to connect. The [`stdio` README](mcp-server/stdio/README.md) explains the
+> configuration that keeps stdout silent.
+
+### Exercising a tool
+
+Once connected, the workflow is the same for every server:
+
+1. Click **Connect** — a successful handshake confirms transport and configuration.
+2. Open the **Tools** tab and click **List Tools** — this is the same `tools/list`
+   discovery call from section 6, so you see exactly what an LLM would see: each tool's
+   name, description, and input schema. (This is a great place to sanity-check your
+   `@Tool` descriptions — remember, they're the model's "API docs".)
+3. Select a tool, fill in the arguments (e.g. `Seattle` for
+   `getWeatherForecastByLocation`, or `symbols = EUR,GBP,INR` for `getCurrencyRates`),
+   and click **Run Tool** — the Inspector sends a real `tools/call` and shows the result.
+4. If you change server code: for HTTP servers restart the server and reconnect; for
+   STDIO rebuild the jar and hit **Restart** in the Inspector.
+
+Because the Inspector is just another MCP client, a server that works here will work
+unchanged in Claude Desktop, Claude Code, or your own Spring AI client app — that's the
+"write once, use everywhere" promise from section 7 in action.
+
+## 9. Key takeaways
 
 - LLMs alone are **isolated**: no live data, no actions. Tools fix that; MCP
   **standardizes** how tools are offered and called.

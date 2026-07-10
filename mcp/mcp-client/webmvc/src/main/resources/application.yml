@@ -22,3 +22,6 @@ spring:
             currency-converter:
               url: http://localhost:8082
               endpoint: /mcp
+            inventory-server:
+              url: http://localhost:8083
+              endpoint: /mcp
