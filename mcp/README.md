@@ -16,20 +16,21 @@ contain working Spring AI examples of everything described here.
   * [5. What can an MCP server offer?](#5-what-can-an-mcp-server-offer)
   * [6. How it works: a tool call, step by step](#6-how-it-works-a-tool-call-step-by-step)
   * [7. How AI benefits from MCP servers](#7-how-ai-benefits-from-mcp-servers)
-  * [8. Testing MCP servers with MCP Inspector](#8-testing-mcp-servers-with-mcp-inspector)
+  * [8. Key takeaways](#8-key-takeaways)
+  * [9. What are we going to build?](#9-what-are-we-going-to-build)
+  * [Further reading](#further-reading)
+  * [Appendix: Testing MCP servers with MCP Inspector](#appendix-testing-mcp-servers-with-mcp-inspector)
     * [Starting the Inspector](#starting-the-inspector)
     * [Connecting to the servers in this repo](#connecting-to-the-servers-in-this-repo)
     * [Exercising a tool](#exercising-a-tool)
-  * [9. Key takeaways](#9-key-takeaways)
-  * [Further reading](#further-reading)
 <!-- TOC -->
 
 ---
 
 ## 1. The problem: LLMs are frozen in time and isolated
 
-A Large Language Model (LLM) like Claude or GPT is incredibly capable, but it has two
-built-in limitations:
+A Large Language Model (LLM — such as GPT, Claude, Gemini, Llama, or Mistral) is
+incredibly capable, but it has two built-in limitations:
 
 1. **Its knowledge has a cutoff date.** The model only knows what was in its training
    data. Ask it *"What's the weather in New York right now?"* and it simply cannot know —
@@ -172,7 +173,7 @@ flowchart LR
 Key points to remember:
 
 - One host can connect to **many servers** (one client per server).
-- The **LLM never talks to the server directly** — the host mediates every call.
+- The **LLM never talks to the server directly** — the host orchestrates every call.
 - Servers don't know or care which AI app is calling them. Our weather server works
   identically with Claude Desktop, MCP Inspector, or a Spring AI client.
 
@@ -327,7 +328,78 @@ Why does all this matter? Because MCP servers transform what an AI can do:
    handling). Each side can evolve independently — the same reason we love microservices
    and well-defined APIs.
 
-## 8. Testing MCP servers with MCP Inspector
+## 8. Key takeaways
+
+- LLMs alone are **isolated**: no live data, no actions. Tools fix that; MCP
+  **standardizes** how tools are offered and called.
+- MCP is the **USB-C of AI**: one open protocol replacing M × N custom integrations with
+  M + N.
+- Three roles: **Host** (the AI app) → **Client** (the connector, one per server) →
+  **Server** (exposes tools/resources/prompts).
+- The **LLM only decides** which tool to call — the host executes the call, the server
+  does the real work.
+- Same protocol, two transports: **STDIO** (local child process) and **streamable HTTP**
+  (networked, multi-client) — see the sub-project READMEs for the details.
+- For AI, MCP servers mean **fresh data, private data, real actions, and a plug-and-play
+  ecosystem**.
+
+## 9. What are we going to build?
+
+Everything described above is implemented as working Spring Boot projects in this folder —
+we build **both sides** of the MCP architecture:
+
+```mermaid
+flowchart LR
+    subgraph Clients["mcp-client/  =  HOST apps"]
+        Host["webmvc / webflux<br/>ChatClient (LLM) + MCP clients"]
+    end
+
+    subgraph Servers["mcp-server/  =  MCP SERVERS"]
+        W1["webmvc — weather<br/>(HTTP, port 8080)"]
+        W2["webflux — weather<br/>(HTTP, port 8081)"]
+        CC["currency-converter-mcp<br/>(HTTP, port 8082)"]
+        INV["inventory-mcp-server<br/>(HTTP, port 8083)"]
+        STDIO["stdio — weather<br/>(child process)"]
+    end
+
+    Host <-- MCP protocol --> W1
+    Host <-- MCP protocol --> W2
+    Host <-- MCP protocol --> CC
+    Host <-- MCP protocol --> INV
+    Host <-- MCP protocol --> STDIO
+```
+
+**MCP servers** ([`mcp-server/`](mcp-server)) — Spring services published as MCP tools:
+
+| Module | What it exposes | Transport |
+|---|---|---|
+| [`webmvc`](mcp-server/webmvc) | Weather tools backed by weatherapi.com | Streamable HTTP (port 8080) |
+| [`webflux`](mcp-server/webflux) | The same weather tools, on the reactive stack | Streamable HTTP (port 8081) |
+| [`currency-converter-mcp`](mcp-server/currency-converter-mcp) | Live currency exchange-rate tools | Streamable HTTP (port 8082) |
+| [`inventory-mcp-server`](mcp-server/inventory-mcp-server) | Read tools over a product-inventory REST service (full CRUD API + MCP on top) | Streamable HTTP (port 8083) |
+| [`stdio`](mcp-server/stdio) | Weather tools again, but launched as a child process | STDIO |
+
+**MCP clients / hosts** ([`mcp-client/`](mcp-client)) — your own AI app consuming those servers:
+
+| Module | What it does |
+|---|---|
+| [`webmvc`](mcp-client/webmvc) | A host app: an LLM-backed `ChatClient` wired to the weather, currency and inventory servers — ask one question, and the model picks the right tool from the right server |
+| [`webflux`](mcp-client/webflux) | The same host on the reactive stack |
+| [`fake-mcp-servers`](mcp-client/fake-mcp-servers) | Lightweight fake servers used to integration-test the clients without real APIs |
+
+Together they demonstrate the full story: the **M + N** promise (one client talking to many
+servers), both **transports** (Streamable HTTP and STDIO), both web stacks (**WebMVC** and
+**WebFlux**), and how to **test** each piece — with MCP Inspector (see the
+[appendix](#appendix-testing-mcp-servers-with-mcp-inspector)) and with integration tests.
+
+## Further reading
+
+- [MCP official documentation](https://modelcontextprotocol.io) — the specification and guides
+- [Spring AI MCP reference](https://docs.spring.io/spring-ai/reference/api/mcp/mcp-overview.html) — how Spring AI implements MCP clients and servers
+- [MCP Inspector](https://github.com/modelcontextprotocol/inspector) — interactive testing tool used throughout this repo
+- The sub-project READMEs in [`mcp-server/`](mcp-server) — deep dives on transports, SYNC vs ASYNC, and integration testing
+
+## Appendix: Testing MCP servers with MCP Inspector
 
 Just as you'd reach for **Postman** to poke at a REST API before wiring up a real client,
 [**MCP Inspector**](https://github.com/modelcontextprotocol/inspector) is the interactive
@@ -402,25 +474,3 @@ Once connected, the workflow is the same for every server:
 Because the Inspector is just another MCP client, a server that works here will work
 unchanged in Claude Desktop, Claude Code, or your own Spring AI client app — that's the
 "write once, use everywhere" promise from section 7 in action.
-
-## 9. Key takeaways
-
-- LLMs alone are **isolated**: no live data, no actions. Tools fix that; MCP
-  **standardizes** how tools are offered and called.
-- MCP is the **USB-C of AI**: one open protocol replacing M × N custom integrations with
-  M + N.
-- Three roles: **Host** (the AI app) → **Client** (the connector, one per server) →
-  **Server** (exposes tools/resources/prompts).
-- The **LLM only decides** which tool to call — the host executes the call, the server
-  does the real work.
-- Same protocol, two transports: **STDIO** (local child process) and **streamable HTTP**
-  (networked, multi-client) — see the sub-project READMEs for the details.
-- For AI, MCP servers mean **fresh data, private data, real actions, and a plug-and-play
-  ecosystem**.
-
-## Further reading
-
-- [MCP official documentation](https://modelcontextprotocol.io) — the specification and guides
-- [Spring AI MCP reference](https://docs.spring.io/spring-ai/reference/api/mcp/mcp-overview.html) — how Spring AI implements MCP clients and servers
-- [MCP Inspector](https://github.com/modelcontextprotocol/inspector) — interactive testing tool used throughout this repo
-- The sub-project READMEs in [`mcp-server/`](mcp-server) — deep dives on transports, SYNC vs ASYNC, and integration testing
