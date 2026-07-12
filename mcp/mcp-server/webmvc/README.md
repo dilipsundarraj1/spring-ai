@@ -190,27 +190,7 @@ sequenceDiagram
   ordinary request/response — but the transport is ready the moment a tool wants to report
   progress.
 
-The transport is selected purely by configuration:
 
-```yaml
-server:
-  port: 8080
-
-spring:
-  ai:
-    mcp:
-      server:
-        name: my-weather-server-webmvc
-        version: 0.0.1
-        type: SYNC
-        protocol: STREAMABLE      # streamable HTTP
-        streamable-http:
-          mcp-endpoint: /mcp      # the default; shown for clarity
-```
-
-Because the protocol runs over HTTP, the app behaves like any ordinary Spring Boot web
-application: the banner prints, console logging stays on, and Tomcat serves the `/mcp`
-endpoint on port 8080.
 
 ## Code example
 
@@ -243,6 +223,30 @@ public class WeatherService {
 Note the optional parameter in the second tool: `days` is declared with
 `required = false` and the wrapper type `Integer`, and the out-of-range check throws an
 `IllegalArgumentException` that the client receives as a tool error.
+
+
+The transport is selected purely by configuration:
+
+```yaml
+server:
+  port: 8080
+
+spring:
+  ai:
+    mcp:
+      server:
+        name: my-weather-server-webmvc
+        version: 0.0.1
+        type: SYNC
+        protocol: STREAMABLE      # streamable HTTP
+        streamable-http:
+          mcp-endpoint: /mcp      # the default; shown for clarity
+```
+
+Because the protocol runs over HTTP, the app behaves like any ordinary Spring Boot web
+application: the banner prints, console logging stays on, and Tomcat serves the `/mcp`
+endpoint on port 8080.
+
 
 ## SYNC vs ASYNC
 
