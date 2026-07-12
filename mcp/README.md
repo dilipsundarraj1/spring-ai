@@ -394,6 +394,7 @@ servers), both **transports** (Streamable HTTP and STDIO), both web stacks (**We
 
 ## Further reading
 
+- [MCP transports and Spring AI's support for them](docs/mcp-transports.md) — STDIO vs Streamable HTTP (and friends), and the Spring AI starters/properties for each
 - [MCP official documentation](https://modelcontextprotocol.io) — the specification and guides
 - [Spring AI MCP reference](https://docs.spring.io/spring-ai/reference/api/mcp/mcp-overview.html) — how Spring AI implements MCP clients and servers
 - [MCP Inspector](https://github.com/modelcontextprotocol/inspector) — interactive testing tool used throughout this repo
