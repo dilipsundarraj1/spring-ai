@@ -3,7 +3,6 @@
 * [MCP Currency Converter Server (Streamable HTTP / WebFlux)](#mcp-currency-converter-server-streamable-http--webflux)
   * [Building the server with `spring-ai-starter-mcp-server-webflux`](#building-the-server-with-spring-ai-starter-mcp-server-webflux)
   * [Reactive end to end — the WebFlux difference](#reactive-end-to-end--the-webflux-difference)
-  * [Exposing tools with `@McpTool`](#exposing-tools-with-mcptool)
   * [Code example](#code-example)
   * [Transport configuration](#transport-configuration)
   * [Running the server](#running-the-server)
@@ -95,33 +94,16 @@ Layer by layer, compared to the webmvc sibling:
 | Tool signature | returns the value directly | returns `Mono<CurrencyResponse>` |
 | HTTP client | `RestClient` (thread waits) | `WebClient` (no thread waits) |
 
-What that buys: the `Mono` *describes* the work, the event loop registers interest in the
-response, and **no thread ever waits** on openexchangerates.org — a handful of event-loop
-threads can hold thousands of slow calls in flight. This end-to-end non-blocking chain is
-exactly where `ASYNC` is **the right fit**; reactive tool bodies on a servlet stack would
-only buy the programming style, not the scalability.
+What that buys:
 
-## Exposing tools with `@McpTool`
+- The `Mono` *describes* the work — nothing executes until the event loop subscribes to it.
+- The event loop registers interest in the response and **no thread ever waits** on
+  openexchangerates.org.
+- A handful of event-loop threads can hold thousands of slow calls in flight.
+- This end-to-end non-blocking chain is exactly where `ASYNC` is **the right fit**.
+- Reactive tool bodies on a servlet stack would only buy the programming style, not the
+  scalability.
 
-A tool is just a method on a Spring bean, annotated with **`@McpTool`**. The annotation
-scanner (part of the starter) discovers it at startup, derives the input schema from the
-method signature, and registers it with the server — no callbacks, no manual
-`ToolCallback` lists, no schema JSON to hand-write.
-
-What each annotation contributes:
-
-| Annotation | On | What it does |
-|---|---|---|
-| `@McpTool` | the method | Marks it as an MCP tool; the `description` is what the LLM reads to decide *when* to call it — write it for the model, not for humans |
-| `@McpToolParam` | each parameter | Describes the parameter in the generated JSON schema; `required = false` makes it optional |
-
-Everything else is inferred: the tool **name** defaults to the method name, the **input
-schema** comes from the parameter types, and the emitted value is serialized into the
-tool result. An error signal in the `Mono` surfaces to the client as a tool error rather
-than crashing the server. On this `ASYNC` server the one addition is the return type:
-tool methods return `Mono`/`Flux` instead of the value itself.
-
-Full reference: [Spring AI — MCP Annotations (server)](https://docs.spring.io/spring-ai/reference/api/mcp/mcp-annotations-server.html).
 
 ## Code example
 

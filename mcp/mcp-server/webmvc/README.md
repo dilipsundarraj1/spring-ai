@@ -445,11 +445,12 @@ sequenceDiagram
 
 ## SYNC vs ASYNC
 
-`spring.ai.mcp.server.type` selects the server's **programming model** — how your `@McpTool`
-methods are written and executed — not the transport (that is chosen separately via
-`protocol`, and either type combines with either transport). It is a **threading-model**
-difference, not a feature difference — both serve the same MCP protocol, and the client
-can't tell them apart.
+- `spring.ai.mcp.server.type` selects the server's **programming model** — how your
+  `@McpTool` methods are written and executed.
+- It does **not** select the transport — that is chosen separately via `protocol`, and
+  either type combines with either transport.
+- It is a **threading-model** difference, not a feature difference.
+- Both serve the same MCP protocol, and the client can't tell them apart.
 
 ### What SYNC means (this module)
 
