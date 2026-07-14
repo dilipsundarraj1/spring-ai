@@ -5,10 +5,6 @@
   * [Exposing tools with `@McpTool`](#exposing-tools-with-mcptool)
   * [What is streamable HTTP?](#what-is-streamable-http)
   * [Code example](#code-example)
-  * [SYNC vs ASYNC](#sync-vs-async)
-    * [What SYNC means (this module)](#what-sync-means-this-module)
-    * [ASYNC on WebMVC — possible, but know what you get](#async-on-webmvc--possible-but-know-what-you-get)
-    * [What would change for ASYNC](#what-would-change-for-async)
   * [Running the server](#running-the-server)
     * [Option 1: Run with Gradle (`bootRun`)](#option-1-run-with-gradle-bootrun)
     * [Option 2: Build the jar and run it](#option-2-build-the-jar-and-run-it)
@@ -17,7 +13,15 @@
     * [Running the Inspector](#running-the-inspector)
   * [Automated integration test](#automated-integration-test)
     * [Test SetUp and How Wiremock is integrated ?](#test-setup-and-how-wiremock-is-integrated-)
+      * [Setup](#setup)
+      * [Happy path](#happy-path)
+      * [Failure path](#failure-path)
     * [How it works, step by step](#how-it-works-step-by-step)
+  * [SYNC vs ASYNC](#sync-vs-async)
+    * [What SYNC means (this module)](#what-sync-means-this-module)
+    * [ASYNC on WebMVC — possible, but know what you get](#async-on-webmvc--possible-but-know-what-you-get)
+    * [What would change for ASYNC](#what-would-change-for-async)
+    * [ASYNC done right — end-to-end non-blocking](#async-done-right--end-to-end-non-blocking)
   * [Streamable HTTP — the optional listening channel](#streamable-http--the-optional-listening-channel)
 <!-- TOC -->
 
@@ -137,8 +141,6 @@ sequenceDiagram
   `application/json`, but **every other request — including `tools/call` — is always answered
   over SSE**. When a tool has nothing extra to say (this weather server), the stream simply
   carries one event (the final result) and closes — a plain response in SSE clothing.
-- Optionally, the client can open a long-lived **GET** stream on the same endpoint for
-  unsolicited server→client notifications (e.g. "the tool list changed").
 - A `Mcp-Session-Id` header correlates requests into a session.
 - Streams are resumable (`Last-Event-ID`) after a dropped connection.
 
@@ -248,115 +250,6 @@ application: the banner prints, console logging stays on, and Tomcat serves the 
 endpoint on port 8080.
 
 
-## SYNC vs ASYNC
-
-`spring.ai.mcp.server.type` selects the server's **programming model** — how your `@McpTool`
-methods are written and executed — not the transport (that is chosen separately via
-`protocol`, and either type combines with either transport). It is a **threading-model**
-difference, not a feature difference — both serve the same MCP protocol, and the client
-can't tell them apart.
-
-### What SYNC means (this module)
-
-- `SYNC` builds an `McpSyncServer`: tool methods are plain blocking Java.
-- When a `tools/call` arrives, a Tomcat worker thread enters
-  `getWeatherForecastByLocation`, sits **blocked inside the `RestClient` call** until
-  weatherapi.com answers, then returns the result.
-- One request, one thread, held for the full duration — *thread-per-request*:
-  concurrency = thread count. 200 simultaneous tool calls waiting 2s each for
-  weatherapi.com means 200 parked threads.
-- Simple to write, simple to debug — a stack trace reads top to bottom.
-- Blocking dependencies (`RestClient`, JDBC) fit naturally.
-- For a tool server like this one — modest concurrency, one blocking HTTP call per tool —
-  `SYNC` is the right default.
-- Optionally run `SYNC` on virtual threads (`spring.threads.virtual.enabled: true`),
-  which removes most of the parked-thread cost without touching the code.
-
-### ASYNC on WebMVC — possible, but know what you get
-
-Can you set `type: ASYNC` on **this** webmvc module? Yes — `type` and transport are
-independent. But it's a half-step, so be clear about what it buys you.
-
-**How ASYNC executes:** *event-loop* instead of thread-per-request — the `Mono` describes
-the work, an event loop registers interest in the response, and a handful of threads serve
-thousands of in-flight calls because none of them ever waits.
-
-**What it takes:**
-
-- Keep the `spring-ai-starter-mcp-server-webmvc` dependency; just set `type: ASYNC`.
-- Tool methods must now return `Mono`/`Flux`.
-- Anything blocking (`RestClient`, JDBC) **must** be wrapped off the shared threads —
-  blocking inside a `Mono` chain is how reactive apps deadlock:
-
-  ```java
-  return Mono.fromCallable(() -> restClient.get()...body(WeatherResponse.class))
-      .subscribeOn(Schedulers.boundedElastic());   // blocking work off the caller's thread
-  ```
-
-**What you get:** the reactive *programming style* — compose calls (`Mono.zip` to fan out
-to several APIs), add timeouts/retries declaratively, stream partial results, and write
-tool signatures that can later move to `webflux` unchanged.
-
-**What you don't get:** a non-blocking *runtime*. The server underneath is still Tomcat —
-every request still occupies a servlet thread, so scalability does not improve, no matter
-how reactive the tool bodies look.
-
-**The cost:** reactive types infect the whole call chain — one accidental `.block()` on an
-event loop defeats or deadlocks it — and debugging gets harder: stack traces are scheduler
-frames instead of your call path.
-
-**When it makes sense:**
-
-- The server must hold **many slow calls in flight at once**, or the tools themselves are
-  naturally reactive/streaming.
-- You're **stuck on the servlet stack** (existing filters, security config) but want
-  reactive composition inside your tools.
-- You're **migrating to webflux step by step**: reactive signatures first, reactive
-  runtime later.
-
-If neither applies, stay `SYNC` here — and when you want the full non-blocking benefit,
-use the [`webflux` module](../webflux/README.md), where the whole chain
-(Netty → transport → `WebClient`) is non-blocking end to end.
-
-### What would change for ASYNC
-
-`ASYNC` builds an `McpAsyncServer`: tool methods return a **promise of a result** instead of
-the result, and no thread waits for the downstream call. Three coordinated changes:
-
-1. **Config** — flip the type (transport config stays the same):
-
-   ```yaml
-   spring:
-     ai:
-       mcp:
-         server:
-           type: ASYNC
-   ```
-
-2. **Stack** — pair it with the reactive sibling starter (its natural home is the `webflux`
-   module, not this servlet one):
-
-   ```groovy
-   implementation 'org.springframework.ai:spring-ai-starter-mcp-server-webflux'
-   ```
-
-3. **Tool code** — methods return `Mono`/`Flux`, and the blocking `RestClient` becomes a
-   non-blocking `WebClient`:
-
-   ```java
-   @McpTool(description = "Get the current weather conditions for the given city.")
-   public Mono<WeatherResponse> getWeatherForecastByLocation(
-           @McpToolParam(description = "The name of a city or a country") String city) {
-       return webClient.get()
-           .uri("/current.json?key={key}&q={q}", weatherProps.apiKey(), city)
-           .retrieve()
-           .bodyToMono(WeatherResponse.class);   // describes the call; no thread waits on it
-   }
-   ```
-
-   Spring AI's annotation scanner picks the matching adapter automatically
-   (`AsyncMcpToolProvider` for `ASYNC`, its sync counterpart for `SYNC`).
-
 ## Running the server
 
 The server is a standalone HTTP service — you run it yourself, and any number of clients
@@ -440,17 +333,46 @@ In the browser UI select transport type **Streamable HTTP**, set the URL to
 
 ## Automated integration test
 
-[`McpWeatherServerWebMvcIntegrationTest`](src/test/java/com/mcp/McpWeatherServerWebMvcIntegrationTest.java)
-talks real MCP to the server over streamable HTTP, while the
-weatherapi.com backend is replaced by a **WireMock stub**. That way the entire pipeline —
-MCP `tools/call` → `WeatherService` → `RestClient` → JSON deserialization → tool result —
-runs deterministically on every build: offline, no API key, no rate limits, no flakiness.
+[`McpWeatherServerWebMvcIntegrationTest`](src/test/java/com/mcp/McpWeatherServerWebMvcIntegrationTest.java):
+
+- Talks **real MCP** to the server over streamable HTTP — no mocked protocol layer.
+- Replaces only the weatherapi.com backend with a **WireMock stub**.
+- Exercises the entire pipeline: MCP `tools/call` → `WeatherService` → `RestClient` →
+  JSON deserialization → tool result.
+- Runs deterministically on every build: offline, no API key, no rate limits, no
+  flakiness.
 
 ### Test SetUp and How Wiremock is integrated ?
 
+The flow as sequence diagrams — setup first, then one happy-path tool call, then the
+stubbed failure path. Everything runs inside the one test JVM.
 
-The same flow as a sequence diagram — setup first, then one happy-path tool call and the
-stubbed error path (rendered by GitHub/IntelliJ from the Mermaid source):
+#### Setup
+
+WireMock starts before the Spring context so its URL can be injected as the weather API
+base URL; then the stubs are registered and the MCP client performs the `initialize`
+handshake:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Test as JUnit test
+    participant Client as McpSyncClient<br/>(streamable HTTP)
+    participant Server as Spring Boot MCP server<br/>(Tomcat, /mcp, random port)
+    participant WireMock as WireMock stub<br/>(dynamic port)
+
+    Test->>WireMock: start (@DynamicPropertySource)
+    Test->>Server: boot context (@SpringBootTest RANDOM_PORT)<br/>weather.api-url = wireMock.baseUrl()
+    Test->>WireMock: register stubs (@BeforeAll)
+    Test->>Client: initialize()
+    Client->>Server: POST /mcp — initialize
+    Server-->>Client: serverInfo: my-weather-server-webmvc
+```
+
+#### Happy path
+
+A real `tools/call` travels the whole pipeline; the stub answers with canned JSON, and
+the assertions check its values come back through deserialization:
 
 ```mermaid
 sequenceDiagram
@@ -461,41 +383,39 @@ sequenceDiagram
     participant Service as WeatherService<br/>(RestClient)
     participant WireMock as WireMock stub<br/>(dynamic port)
 
-    Note over Test,WireMock: everything runs inside the one test JVM
+    Test->>Client: callTool(city = London)
+    Client->>Server: POST /mcp — tools/call
+    Server->>Service: getWeatherForecastByLocation("London")
+    Service->>WireMock: GET /current.json?key=test-api-key&q=London
+    WireMock-->>Service: 200 current_response.json
+    Service-->>Server: WeatherResponse (deserialized records)
+    Server-->>Client: tool result
+    Client-->>Test: assert "London", "Overcast"
+```
 
-    rect rgb(235, 244, 255)
-        Note over Test,WireMock: setup
-        Test->>WireMock: start (@DynamicPropertySource)
-        Test->>Server: boot context (@SpringBootTest RANDOM_PORT)<br/>weather.api-url = wireMock.baseUrl()
-        Test->>WireMock: register stubs (@BeforeAll)
-        Test->>Client: initialize()
-        Client->>Server: POST /mcp — initialize
-        Server-->>Client: serverInfo: my-weather-server-webmvc
-    end
+#### Failure path
 
-    rect rgb(235, 255, 238)
-        Note over Test,WireMock: happy path (stub values round-trip)
-        Test->>Client: callTool(city = London)
-        Client->>Server: POST /mcp — tools/call
-        Server->>Service: getWeatherForecastByLocation("London")
-        Service->>WireMock: GET /current.json?key=test-api-key&q=London
-        WireMock-->>Service: 200 current_response.json
-        Service-->>Server: WeatherResponse (deserialized records)
-        Server-->>Client: tool result
-        Client-->>Test: assert "London", "Overcast"
-    end
+The stub replies with a 401 (weatherapi.com's real invalid-key error shape); the service
+throws, and the client receives an MCP tool result flagged `isError` — the server keeps
+running:
 
-    rect rgb(255, 240, 238)
-        Note over Test,WireMock: error path
-        Test->>Client: callTool(city = Atlantis)
-        Client->>Server: POST /mcp — tools/call
-        Server->>Service: getWeatherForecastByLocation("Atlantis")
-        Service->>WireMock: GET /current.json?q=Atlantis
-        WireMock-->>Service: 401 invalid key
-        Service-->>Server: throws (logged + rethrown)
-        Server-->>Client: tool result with isError = true
-        Client-->>Test: assert isError
-    end
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Test as JUnit test
+    participant Client as McpSyncClient<br/>(streamable HTTP)
+    participant Server as Spring Boot MCP server<br/>(Tomcat, /mcp, random port)
+    participant Service as WeatherService<br/>(RestClient)
+    participant WireMock as WireMock stub<br/>(dynamic port)
+
+    Test->>Client: callTool(city = Atlantis)
+    Client->>Server: POST /mcp — tools/call
+    Server->>Service: getWeatherForecastByLocation("Atlantis")
+    Service->>WireMock: GET /current.json?q=Atlantis
+    WireMock-->>Service: 401 invalid key
+    Service-->>Server: throws (logged + rethrown)
+    Server-->>Client: tool result with isError = true
+    Client-->>Test: assert isError
 ```
 
 ### How it works, step by step
@@ -522,6 +442,147 @@ sequenceDiagram
    record deserialization works.
 6. **Teardown:** `@AfterAll` closes the MCP client and stops WireMock; Spring shuts the
    context down itself.
+
+## SYNC vs ASYNC
+
+`spring.ai.mcp.server.type` selects the server's **programming model** — how your `@McpTool`
+methods are written and executed — not the transport (that is chosen separately via
+`protocol`, and either type combines with either transport). It is a **threading-model**
+difference, not a feature difference — both serve the same MCP protocol, and the client
+can't tell them apart.
+
+### What SYNC means (this module)
+
+- `SYNC` builds an `McpSyncServer`: tool methods are plain blocking Java.
+- When a `tools/call` arrives, a Tomcat worker thread enters
+  `getWeatherForecastByLocation`, sits **blocked inside the `RestClient` call** until
+  weatherapi.com answers, then returns the result.
+- One request, one thread, held for the full duration — *thread-per-request*:
+  concurrency = thread count. 200 simultaneous tool calls waiting 2s each for
+  weatherapi.com means 200 parked threads.
+- Simple to write, simple to debug — a stack trace reads top to bottom.
+- Blocking dependencies (`RestClient`, JDBC) fit naturally.
+- For a tool server like this one — modest concurrency, one blocking HTTP call per tool —
+  `SYNC` is the right default.
+- Optionally run `SYNC` on virtual threads (`spring.threads.virtual.enabled: true`),
+  which removes most of the parked-thread cost without touching the code.
+
+### ASYNC on WebMVC — possible, but know what you get
+
+Can you set `type: ASYNC` on **this** webmvc module? Yes — `type` and transport are
+independent. But it's a half-step, so be clear about what it buys you:
+
+```mermaid
+flowchart LR
+    Client["MCP client"] --> Tomcat["Tomcat servlet thread<br/>❌ still blocking —<br/>one thread held per request"]
+    Tomcat --> Tool["@McpTool method<br/>✅ reactive style —<br/>returns Mono/Flux"]
+    Tool --> API["weatherapi.com"]
+```
+
+The tool *code* becomes reactive, but every request still rides a servlet thread — the
+runtime underneath is unchanged.
+
+**How ASYNC executes:** *event-loop* instead of thread-per-request — the `Mono` describes
+the work, an event loop registers interest in the response, and a handful of threads serve
+thousands of in-flight calls because none of them ever waits.
+
+**What it takes:**
+
+- Keep the `spring-ai-starter-mcp-server-webmvc` dependency; just set `type: ASYNC`.
+- Tool methods must now return `Mono`/`Flux`.
+- Anything blocking (`RestClient`, JDBC) **must** be wrapped off the shared threads —
+  blocking inside a `Mono` chain is how reactive apps deadlock:
+
+  ```java
+  return Mono.fromCallable(() -> restClient.get()...body(WeatherResponse.class))
+      .subscribeOn(Schedulers.boundedElastic());   // blocking work off the caller's thread
+  ```
+
+**What you get:** the reactive *programming style* — compose calls (`Mono.zip` to fan out
+to several APIs), add timeouts/retries declaratively, stream partial results, and write
+tool signatures that can later move to `webflux` unchanged.
+
+**What you don't get:** a non-blocking *runtime*. The server underneath is still Tomcat —
+every request still occupies a servlet thread, so scalability does not improve, no matter
+how reactive the tool bodies look.
+
+**The cost:** reactive types infect the whole call chain — one accidental `.block()` on an
+event loop defeats or deadlocks it — and debugging gets harder: stack traces are scheduler
+frames instead of your call path.
+
+**When it makes sense:**
+
+- The server must hold **many slow calls in flight at once**, or the tools themselves are
+  naturally reactive/streaming.
+- You're **stuck on the servlet stack** (existing filters, security config) but want
+  reactive composition inside your tools.
+- You're **migrating to webflux step by step**: reactive signatures first, reactive
+  runtime later.
+
+If neither applies, stay `SYNC` here — and when you want the full non-blocking benefit,
+use the [`webflux` module](../webflux/README.md), where the whole chain
+(Netty → transport → `WebClient`) is non-blocking end to end.
+
+### What would change for ASYNC
+
+`ASYNC` builds an `McpAsyncServer`: tool methods return a **promise of a result** instead of
+the result, and no thread waits for the downstream call. Three coordinated changes:
+
+1. **Config** — flip the type (transport config stays the same):
+
+   ```yaml
+   spring:
+     ai:
+       mcp:
+         server:
+           type: ASYNC
+   ```
+
+2. **Stack** — pair it with the reactive sibling starter (its natural home is the `webflux`
+   module, not this servlet one):
+
+   ```groovy
+   implementation 'org.springframework.ai:spring-ai-starter-mcp-server-webflux'
+   ```
+
+3. **Tool code** — methods return `Mono`/`Flux`, and the blocking `RestClient` becomes a
+   non-blocking `WebClient`:
+
+   ```java
+   @McpTool(description = "Get the current weather conditions for the given city.")
+   public Mono<WeatherResponse> getWeatherForecastByLocation(
+           @McpToolParam(description = "The name of a city or a country") String city) {
+       return webClient.get()
+           .uri("/current.json?key={key}&q={q}", weatherProps.apiKey(), city)
+           .retrieve()
+           .bodyToMono(WeatherResponse.class);   // describes the call; no thread waits on it
+   }
+   ```
+
+   Spring AI's annotation scanner picks the matching adapter automatically
+   (`AsyncMcpToolProvider` for `ASYNC`, its sync counterpart for `SYNC`).
+
+### ASYNC done right — end-to-end non-blocking
+
+The lesson from the half-step above: **ASYNC only pays off when the *entire* chain is
+non-blocking — the server runtime *and* the tool code.** A single blocking link (Tomcat's
+servlet threads, or one blocking client call) puts you right back to thread-per-request
+economics, no matter how reactive the rest looks.
+
+What "end to end" means, layer by layer:
+
+| Layer | Blocking (this webmvc module) | Non-blocking (what ASYNC needs) |
+|---|---|---|
+| Server runtime | Tomcat — one servlet thread per request | Netty — event loop |
+| MCP starter | `spring-ai-starter-mcp-server-webmvc` | `spring-ai-starter-mcp-server-webflux` |
+| Tool signature | returns the value directly | returns `Mono`/`Flux` |
+| HTTP client | `RestClient` (thread waits) | `WebClient` (no thread waits) |
+
+> ✅ **The right fit: the [`webflux` sibling module](../webflux/README.md).** It combines
+> `spring-ai-starter-mcp-server-webflux`, `type: ASYNC`, and `WebClient` tools — every
+> link from Netty to the outgoing weather call is non-blocking, so a handful of
+> event-loop threads can hold thousands of slow calls in flight. That is where the
+> event-loop economics actually materialize.
 
 ## Streamable HTTP — the optional listening channel
 
