@@ -3,7 +3,6 @@
   * [How it differs from the WebMVC client](#how-it-differs-from-the-webmvc-client)
   * [How it works](#how-it-works)
     * [Architecture at a glance](#architecture-at-a-glance)
-    * [From YAML to `ToolCallbackProvider`](#from-yaml-to-toolcallbackprovider)
     * [Reactive endpoints](#reactive-endpoints)
   * [Where MCP shines: new capabilities without new integration code](#where-mcp-shines-new-capabilities-without-new-integration-code)
   * [Running](#running)
@@ -12,7 +11,8 @@
 
 # MCP Client (WebFlux)
 
-A Spring Boot MCP **client** that connects to three MCP servers over **Streamable HTTP** — the [MCP Weather Server (WebFlux)](../../mcp-server/webflux), the [Currency Converter MCP Server](../../mcp-server/currency-converter-mcp) and the [Inventory MCP Server](../../mcp-server/inventory-mcp-server) — and exposes their tools to a single OpenAI-backed `ChatClient`. It is the fully **reactive** counterpart of the [WebMVC client](../webmvc).
+- A Spring Boot MCP **client** that connects to three MCP servers over **Streamable HTTP** — the [MCP Weather Server (WebFlux)](../../mcp-server/webflux), the [Currency Converter MCP Server](../../mcp-server/currency-converter-mcp) and the [Inventory MCP Server](../../mcp-server/inventory-mcp-server) — and exposes their tools to a single OpenAI-backed `ChatClient`.
+- It is the fully **reactive** counterpart of the [WebMVC client](../webmvc).
 
 ## How it differs from the WebMVC client
 
@@ -52,8 +52,9 @@ spring:
               endpoint: /mcp
 ```
 
-- The starter creates one `McpAsyncClient` **per connection entry**, auto-discovers every server's tools (`getWeatherForecastByLocation` and `getForecastWeatherByLocation` from the weather server, `getCurrencyRates` from the currency converter, and the four inventory lookup tools such as `searchInventoryItemsByProductName` from the inventory server), and merges them all into a single `ToolCallbackProvider`, whose callbacks `ChatController` registers on the `ChatClient` via `defaultToolCallbacks(...)` (resolved once at startup — the async provider blocks on `tools/list`, which is not allowed on a Netty event-loop thread). The LLM sees one flat tool list and picks the right server's tool per question — adding another server is just another `connections:` entry, no code changes.
-- On startup, `McpClientApplication` logs the tools discovered from every connected MCP server — reactively, via `McpAsyncClient.listTools()` which returns a `Mono`.
+- The starter creates one `McpAsyncClient` **per connection entry**, auto-discovers every server's tools, and merges them into a single `ToolCallbackProvider`. `ChatController` registers its callbacks on the `ChatClient` via `defaultToolCallbacks(...)`, resolved once at startup (the async provider blocks on `tools/list`, which is not allowed on a Netty event-loop thread).
+- The LLM sees one flat tool list and picks the right server's tool per question — adding another server is just another `connections:` entry, no code changes.
+- On startup, `McpClientApplication` logs each connected server's tools reactively, via `McpAsyncClient.listTools()` which returns a `Mono`.
 
 ### Architecture at a glance
 
@@ -61,40 +62,28 @@ spring:
 flowchart LR
     U["curl"] -- "GET /chat<br/>GET /chat/stream (SSE)" --> CC
 
-    subgraph APP["MCP Client (WebFlux, :9001, Netty)"]
+    subgraph APP["MCP Client app (WebFlux, :9001, Netty)"]
         CC["ChatController<br/>Mono / Flux"] --> CH["ChatClient"]
-        CH --> TP["AsyncMcpToolCallbackProvider<br/>one flat tool list"]
+        CH -- "invoke requested tool<br/>(tool callback)" --> TP["AsyncMcpToolCallbackProvider<br/>one flat tool list"]
+        TP -- "delegate to<br/>owning client" --> C1["McpAsyncClient<br/>(weather-server)"]
+        TP -- "delegate to<br/>owning client" --> C2["McpAsyncClient<br/>(currency-converter)"]
+        TP -- "delegate to<br/>owning client" --> C3["McpAsyncClient<br/>(inventory-server)"]
     end
 
-    CH <-- "prompt + tool schemas<br/>token stream back" --> LLM["OpenAI LLM"]
+    CH <-- "prompt + tool schemas →<br/>← tool-call request<br/>tool result →<br/>← final answer / token stream" --> LLM["OpenAI LLM"]
 
-    TP -- "tools/call<br/>Streamable HTTP :8081/mcp<br/>(non-blocking WebClient)" --> WS["Weather MCP Server"]
-    TP -- "tools/call<br/>Streamable HTTP :8082/mcp<br/>(non-blocking WebClient)" --> XS["Currency MCP Server"]
-    TP -- "tools/call<br/>Streamable HTTP :8083/mcp<br/>(non-blocking WebClient)" --> IS["Inventory MCP Server"]
+    C1 -- "tools/call<br/>Streamable HTTP :8081/mcp<br/>(non-blocking WebClient)" --> WS["Weather MCP Server"]
+    C2 -- "tools/call<br/>Streamable HTTP :8082/mcp<br/>(non-blocking WebClient)" --> XS["Currency MCP Server"]
+    C3 -- "tools/call<br/>Streamable HTTP :8083/mcp<br/>(non-blocking WebClient)" --> IS["Inventory MCP Server"]
 
     WS --> WA["weatherapi.com"]
     XS --> OX["openexchangerates.org"]
     IS --> DB[("H2 inventory DB")]
 ```
 
-- The `ChatClient` sends every question to the LLM together with the tool schemas discovered from **all** servers; when the LLM asks for a tool, the provider routes the `tools/call` to whichever MCP server owns it.
+- The `ChatClient` sends every question to the LLM together with the tool schemas discovered from **all** servers; when the LLM asks for a tool, the provider delegates the `tools/call` to the `McpAsyncClient` of whichever server owns it.
 - Nothing in this pipeline blocks: MCP calls ride a reactive `WebClient`, and on `/chat/stream` the LLM's tokens flow straight through to the caller as Server-Sent Events.
 
-### From YAML to `ToolCallbackProvider`
-
-Same auto-configuration flow as the WebMVC client, with the async variants swapped in:
-
-- **Connections → `McpAsyncClient` beans**
-  - Each entry under `spring.ai.mcp.client.streamable-http.connections` produces one MCP client.
-  - Because `type: ASYNC`, the three entries — `weather-server`, `currency-converter` and `inventory-server` — create three `McpAsyncClient`s backed by non-blocking `WebClient` streamable HTTP transports.
-  - On startup, each client performs the MCP `initialize` handshake against its own server: `http://localhost:8081/mcp`, `http://localhost:8082/mcp` and `http://localhost:8083/mcp`.
-
-- **Clients → one `ToolCallbackProvider` bean**
-  - The starter wraps *all* `McpAsyncClient`s in a single `AsyncMcpToolCallbackProvider`.
-  - The provider calls `tools/list` on each server and adapts every MCP tool into a Spring AI `ToolCallback`.
-
-- **Provider → `ChatClient` → LLM**
-  - `ChatController` resolves the provider's callbacks once at startup and registers them via `defaultToolCallbacks(...)`; when the model picks a tool, the callback issues an MCP `tools/call` over the same streamable HTTP connection — without blocking an event-loop thread.
 
 ### Reactive endpoints
 

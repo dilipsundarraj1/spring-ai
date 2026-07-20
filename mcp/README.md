@@ -125,16 +125,15 @@ no extra code.
 
 ### The USB-C analogy
 
-Think of MCP as the **USB-C port for AI applications**.
-
-Before USB-C, every device had its own charger and its own cable. Today, one standard port
-connects your laptop to chargers, monitors, and drives — any device, any accessory, one
-plug.
-
-MCP does the same for AI: one standard "port" through which any AI application can connect
-to any tool or data source. The AI app doesn't need to know *how* the weather API works
-internally, just as your laptop doesn't need to know how the monitor works — the standard
-handles the conversation.
+- Think of MCP as the **USB-C port for AI applications**.
+- Before USB-C, every device had its own charger and its own cable. Today, one standard
+  port connects your laptop to chargers, monitors, and drives — any device, any accessory,
+  one plug.
+- MCP does the same for AI: one standard "port" through which any AI application can
+  connect to any tool or data source.
+- The AI app doesn't need to know *how* the weather API works internally, just as your
+  laptop doesn't need to know how the monitor works — the standard handles the
+  conversation.
 
 > 📖 The official specification, documentation, and guides live at
 > [modelcontextprotocol.io](https://modelcontextprotocol.io).
