@@ -1,5 +1,6 @@
 <!-- TOC -->
 * [MCP Client (WebMVC)](#mcp-client-webmvc)
+  * [What we are going to build](#what-we-are-going-to-build)
   * [How it works](#how-it-works)
     * [Architecture at a glance](#architecture-at-a-glance)
     * [From YAML to `ToolCallbackProvider`](#from-yaml-to-toolcallbackprovider)
@@ -20,8 +21,16 @@
 
 # MCP Client (WebMVC)
 
+## What we are going to build
 
-A Spring Boot MCP **client** that connects to three MCP servers over **Streamable HTTP** — the [MCP Weather Server](../../mcp-server/webflux) (port **8081**), the [Currency Converter MCP Server](../../mcp-server/currency-converter-mcp) (port **8082**) and the [Inventory MCP Server](../../mcp-server/inventory-mcp-server) (port **8083**) — and exposes their tools to a single OpenAI-backed `ChatClient`.
+In this part of the course, we are going to build a Spring Boot MCP **client** — the piece that ties everything together. Up to now we have built individual MCP servers; here we'll build a single chat application that consumes all of them at once:
+
+- Connect to **three MCP servers** over **Streamable HTTP** — the [MCP Weather Server](../../mcp-server/webflux) (port **8081**), the [Currency Converter MCP Server](../../mcp-server/currency-converter-mcp) (port **8082**) and the [Inventory MCP Server](../../mcp-server/inventory-mcp-server) (port **8083**) — using nothing but YAML configuration.
+- Auto-discover every server's tools at startup and merge them into a single `ToolCallbackProvider`.
+- Wire those tools into one OpenAI-backed `ChatClient`, so the LLM sees one flat tool list and decides on its own which server's tool to call for each question.
+- Expose a simple `/chat` endpoint where a single question can fan out to multiple MCP servers (e.g. look up an inventory price *and* convert it to EUR).
+
+Along the way we'll dig into how the client works under the hood, why MCP lets us add new capabilities without writing integration code, and the difference between **stateful** and **stateless** Streamable HTTP — including what each choice means for scaling in the cloud.
 
 ## How it works
 
@@ -200,7 +209,7 @@ The session is a persistent, addressable channel back to a specific client. Ever
 
 ### The trade-off
 
-- A server **restart wipes all sessions**: the first request from an already-running client fails once, then the client re-handshakes automatically (see [Troubleshooting](#troubleshooting)).
+- A server **restart wipes all sessions**: calls from an already-running client will never succeed — both the server and the client must be restarted for the connection to work again (see [Troubleshooting](#troubleshooting)).
 - Horizontal scaling needs sticky sessions, since the session lives in one server instance's memory.
 - For a pure request/response tool server like this weather example, none of the server → client features are used — switching the server to `protocol: STATELESS` removes the session entirely, making restarts invisible and scaling trivial at the cost of those features.
 
@@ -314,6 +323,8 @@ sequenceDiagram
    curl -G http://localhost:9000/chat --data-urlencode "question=Give me a 5 day forecast for Dallas"
 
    curl -G http://localhost:9000/chat --data-urlencode "question=How much is 100 USD in EUR?"
+   
+   curl -G http://localhost:9000/chat --data-urlencode "question=How much is 100 USD in paris and weather in paris?"
 
    curl -G http://localhost:9000/chat --data-urlencode "question=Do we have any iPhones in stock?"
 
@@ -325,9 +336,9 @@ sequenceDiagram
 
 ## Troubleshooting
 
-**First request after a server restart fails** (log shows `Server does not recognize session … Invalidating` and `MCP session with server terminated`; the LLM replies that the weather service is unavailable).
+**Requests after a server restart fail** (log shows `Server does not recognize session … Invalidating` and `MCP session with server terminated`; the LLM replies that the weather service is unavailable).
 
-- The `STREAMABLE` protocol is *stateful*: the server keeps MCP sessions in memory, so a restart wipes them. The client's next call still carries the old session ID, the server rejects it, and that one request fails. The client then invalidates the stale session and re-handshakes automatically — **just retry the request**.
+- The `STREAMABLE` protocol is *stateful*: the server keeps MCP sessions in memory, so a restart wipes them. The client's calls still carry the old session ID, the server rejects them, and retrying does not help — the calls will never succeed. **Restart both the server and the client** to establish a fresh session and make the connection work again.
 - To make server restarts seamless, switch the server to `spring.ai.mcp.server.protocol: STATELESS` (fine for plain tool servers; you lose server-initiated features like notifications and sampling).
 
 **Client fails to start with `Client failed to initialize by explicit API call`** — the MCP server isn't running (or the `url`/`endpoint` in `application.yml` is wrong). Start the server first; the client verifies the connection eagerly at startup.
