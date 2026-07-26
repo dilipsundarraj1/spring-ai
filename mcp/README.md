@@ -12,12 +12,12 @@ contain working Spring AI examples of everything described here.
     * [The USB-C analogy](#the-usb-c-analogy)
   * [4. MCP architecture: Host, Client, Server](#4-mcp-architecture-host-client-server)
     * [The REST analogy: MCP Server ≈ REST API, MCP Client ≈ REST Client](#the-rest-analogy-mcp-server--rest-api-mcp-client--rest-client)
+    * [The wire format: JSON-RPC 2.0](#the-wire-format-json-rpc-20)
     * [Where Spring AI fits](#where-spring-ai-fits)
   * [5. What can an MCP server offer?](#5-what-can-an-mcp-server-offer)
   * [6. How it works: a tool call, step by step](#6-how-it-works-a-tool-call-step-by-step)
   * [7. How AI benefits from MCP servers](#7-how-ai-benefits-from-mcp-servers)
-  * [8. Key takeaways](#8-key-takeaways)
-  * [9. What are we going to build?](#9-what-are-we-going-to-build)
+  * [8. What are we going to build?](#8-what-are-we-going-to-build)
   * [Further reading](#further-reading)
   * [Appendix: Testing MCP servers with MCP Inspector](#appendix-testing-mcp-servers-with-mcp-inspector)
     * [Starting the Inspector](#starting-the-inspector)
@@ -74,7 +74,7 @@ integrations.
 ```
    BEFORE MCP (M × N custom integrations)
 
-   Claude Desktop ──┬── custom code ──► Weather API
+   AI App 1 ────────┬── custom code ──► Weather API
                     ├── custom code ──► Database
                     └── custom code ──► GitHub
 
@@ -115,7 +115,7 @@ source is wrapped in an MCP server once, and any app can talk to any server.
 ```
    AFTER MCP (M + N)
 
-   Claude Desktop ──┐                ┌──► Weather MCP Server ──► Weather API
+   AI App 1 ────────┐                ┌──► Weather MCP Server ──► Weather API
    Your Spring app ─┼── MCP protocol ┼──► Database MCP Server ──► Database
    Claude Code ─────┘                └──► GitHub MCP Server  ──► GitHub
 ```
@@ -144,13 +144,13 @@ MCP defines three participants. Getting these straight makes everything else eas
 
 | Role | What it is | Example |
 |---|---|---|
-| **Host** | The AI application the user interacts with. It contains the LLM (or calls one) and decides what to do. | Claude Desktop, Claude Code, your Spring AI chatbot |
-| **MCP Client** | A connector *inside the host* that maintains a 1-to-1 connection with one MCP server and speaks the protocol. | Spring AI's MCP client, the client built into Claude Desktop |
+| **Host** | The AI application the user interacts with. It contains the LLM (or calls one) and decides what to do. | Claude Code, your Spring AI chatbot |
+| **MCP Client** | A connector *inside the host* that maintains a 1-to-1 connection with one MCP server and speaks the protocol. | Spring AI's MCP client, the client built into your host app |
 | **MCP Server** | A (usually small) program that exposes capabilities — tools, data, prompts — in the standard MCP format. | The weather servers in this repo, a GitHub server, a database server |
 
 ```mermaid
 flowchart LR
-    subgraph Host["HOST (e.g. Claude Desktop)"]
+    subgraph Host["HOST (e.g. your Spring AI app)"]
         LLM["LLM"]
         C1["MCP Client"]
         C2["MCP Client"]
@@ -174,7 +174,7 @@ Key points to remember:
 - One host can connect to **many servers** (one client per server).
 - The **LLM never talks to the server directly** — the host orchestrates every call.
 - Servers don't know or care which AI app is calling them. Our weather server works
-  identically with Claude Desktop, MCP Inspector, or a Spring AI client.
+  identically with MCP Inspector or a Spring AI client.
 
 ### The REST analogy: MCP Server ≈ REST API, MCP Client ≈ REST Client
 
@@ -184,18 +184,77 @@ client/server relationship you use every day with REST:
 | REST world | MCP world | The shared idea |
 |---|---|---|
 | **REST API** (e.g. a `@RestController` exposing endpoints) | **MCP Server** (exposing tools/resources/prompts) | A server publishes capabilities in a standard format and waits for requests |
-| **REST Client** (`RestClient`, `WebClient`, Postman) | **MCP Client** (Spring AI's MCP client, the one inside Claude Desktop) | A connector that knows how to speak the protocol and invoke the server |
+| **REST Client** (`RestClient`, `WebClient`, Postman) | **MCP Client** (Spring AI's MCP client, the one inside your host app) | A connector that knows how to speak the protocol and invoke the server |
 | **Endpoints** (`GET /weather?city=...`) | **Tools** (`getWeatherForecastByLocation(city)`) | Named operations the server offers |
 | **OpenAPI / Swagger spec** | **`tools/list` discovery** | A machine-readable description of what's available and what inputs it takes |
 | **HTTP + JSON** | **JSON-RPC over STDIO or streamable HTTP** | An agreed wire format so any client can talk to any server |
-| **Your service code** calls the API when *your logic* decides to | **The LLM** asks for a tool call when *it* decides one is needed | Who initiates the request |
 
-So when you build an MCP server with Spring AI, think: *"I'm writing a
-`@RestController`, except the 'endpoints' are `@Tool` methods, the 'API docs' are
-generated automatically from my method signatures, and the 'client' calling me is an AI
-application."*
+### The wire format: JSON-RPC 2.0
 
-The one crucial difference is the last row — **who decides to make the call**:
+The REST analogy table above says the MCP wire format is *"JSON-RPC over STDIO or
+streamable HTTP"*. JSON and JSON-RPC are often confused — here is the distinction:
+
+**JSON** — a data format only
+
+- Defines syntax: objects `{}`, arrays `[]`, strings, numbers, booleans, null.
+- No rules about what fields mean or how to use them.
+- A parser turns text into a data structure — that's it.
+- `{"name": "Alice", "age": 30}` is valid JSON, but it carries no implied action or meaning.
+
+**JSON-RPC 2.0** — a protocol built on top of JSON
+
+- Fixes the shape of a **request**: must have `"jsonrpc": "2.0"`, a `"method"` name,
+  optional `"params"`, and an optional `"id"`.
+- Fixes the shape of a **response**: must have `"jsonrpc": "2.0"`, either a `"result"` or
+  an `"error"`, and the same `"id"` that was in the request.
+- The `"id"` links each response to its request — this enables async, multiplexed calls
+  over a single connection (important for STDIO and WebSocket transports).
+- The `"error"` field has its own schema `{code, message, data}` with standardized codes
+  (e.g. `-32600` = invalid request, `-32601` = method not found).
+- Defines **notifications**: a request sent *without* an `"id"` means "fire and forget —
+  I don't need a response."
+- Says nothing about transport — works over HTTP, WebSocket, STDIO, pipes, or anything else.
+
+Both documents below are valid JSON, but only the second is a JSON-RPC message:
+
+```json
+// Plain JSON — just data, no call semantics
+{ "city": "New York", "unit": "celsius" }
+```
+
+```json
+// JSON-RPC 2.0 — a remote method call with a tracked ID
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "getWeatherForecastByLocation",
+    "arguments": { "city": "New York", "unit": "celsius" }
+  }
+}
+```
+
+And the server's reply follows an equally fixed shape:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [{ "type": "text", "text": "31°C, partly cloudy" }]
+  }
+}
+```
+
+> **In one line:** JSON answers *"how do I write this data?"*
+> JSON-RPC answers *"how do I call a remote method and get its result back?"*
+
+MCP uses JSON-RPC 2.0 for every message — `tools/list`, `tools/call`, error responses,
+and notifications. When MCP Inspector shows you "the raw JSON-RPC messages going back and
+forth", these are the shapes you will see.
+
+One key difference is **who decides to make the call**:
 
 - **With REST**, *you* write the code that decides when to call the API and with what
   parameters.
@@ -315,8 +374,8 @@ Why does all this matter? Because MCP servers transform what an AI can do:
    into an *agent*.
 
 4. **Write once, use everywhere.** Because the protocol is standard, one server serves
-   every MCP-compatible host. Build the weather server once; Claude Desktop, Claude Code,
-   MCP Inspector, and your own Spring AI app can all use it unchanged.
+   every MCP-compatible host. Build the weather server once; Claude Code, MCP Inspector,
+   and your own Spring AI app can all use it unchanged.
 
 5. **A growing ecosystem of ready-made servers.** Thousands of open-source MCP servers
    already exist (GitHub, Slack, PostgreSQL, Google Drive, browsers...). Often you don't
@@ -327,22 +386,7 @@ Why does all this matter? Because MCP servers transform what an AI can do:
    handling). Each side can evolve independently — the same reason we love microservices
    and well-defined APIs.
 
-## 8. Key takeaways
-
-- LLMs alone are **isolated**: no live data, no actions. Tools fix that; MCP
-  **standardizes** how tools are offered and called.
-- MCP is the **USB-C of AI**: one open protocol replacing M × N custom integrations with
-  M + N.
-- Three roles: **Host** (the AI app) → **Client** (the connector, one per server) →
-  **Server** (exposes tools/resources/prompts).
-- The **LLM only decides** which tool to call — the host executes the call, the server
-  does the real work.
-- Same protocol, two transports: **STDIO** (local child process) and **streamable HTTP**
-  (networked, multi-client) — see the sub-project READMEs for the details.
-- For AI, MCP servers mean **fresh data, private data, real actions, and a plug-and-play
-  ecosystem**.
-
-## 9. What are we going to build?
+## 8. What are we going to build?
 
 Everything described above is implemented as working Spring Boot projects in this folder —
 we build **both sides** of the MCP architecture:
@@ -355,14 +399,12 @@ flowchart LR
 
     subgraph Servers["mcp-server/  =  MCP SERVERS"]
         W1["webmvc — weather<br/>(HTTP, port 8080)"]
-        W2["webflux — weather<br/>(HTTP, port 8081)"]
         CC["currency-converter-mcp<br/>(HTTP, port 8082)"]
         INV["inventory-mcp-server<br/>(HTTP, port 8083)"]
         STDIO["stdio — weather<br/>(child process)"]
     end
 
     Host <-- MCP protocol --> W1
-    Host <-- MCP protocol --> W2
     Host <-- MCP protocol --> CC
     Host <-- MCP protocol --> INV
     Host <-- MCP protocol --> STDIO
@@ -373,7 +415,6 @@ flowchart LR
 | Module | What it exposes | Transport |
 |---|---|---|
 | [`webmvc`](mcp-server/webmvc) | Weather tools backed by weatherapi.com | Streamable HTTP (port 8080) |
-| [`webflux`](mcp-server/webflux) | The same weather tools, on the reactive stack | Streamable HTTP (port 8081) |
 | [`currency-converter-mcp`](mcp-server/currency-converter-mcp) | Live currency exchange-rate tools | Streamable HTTP (port 8082) |
 | [`inventory-mcp-server`](mcp-server/inventory-mcp-server) | Read tools over a product-inventory REST service (full CRUD API + MCP on top) | Streamable HTTP (port 8083) |
 | [`stdio`](mcp-server/stdio) | Weather tools again, but launched as a child process | STDIO |
@@ -384,7 +425,6 @@ flowchart LR
 |---|---|
 | [`webmvc`](mcp-client/webmvc) | A host app: an LLM-backed `ChatClient` wired to the weather, currency and inventory servers — ask one question, and the model picks the right tool from the right server |
 | [`webflux`](mcp-client/webflux) | The same host on the reactive stack |
-| [`fake-mcp-servers`](mcp-client/fake-mcp-servers) | Lightweight fake servers used to integration-test the clients without real APIs |
 
 Together they demonstrate the full story: the **M + N** promise (one client talking to many
 servers), both **transports** (Streamable HTTP and STDIO), both web stacks (**WebMVC** and
@@ -438,7 +478,6 @@ detailed "Testing with MCP Inspector" walkthrough):
 | Server module | Transport | How to connect |
 |---|---|---|
 | [`mcp-server/webmvc`](mcp-server/webmvc) — weather | Streamable HTTP | URL `http://localhost:8080/mcp` |
-| [`mcp-server/webflux`](mcp-server/webflux) — weather | Streamable HTTP | URL `http://localhost:8081/mcp` |
 | [`mcp-server/currency-converter-mcp`](mcp-server/currency-converter-mcp) | Streamable HTTP | URL `http://localhost:8082/mcp` |
 | [`mcp-server/inventory-mcp-server`](mcp-server/inventory-mcp-server) | Streamable HTTP | URL `http://localhost:8083/mcp` |
 | [`mcp-server/stdio`](mcp-server/stdio) — weather | STDIO | Inspector launches the jar (see below) |
@@ -472,5 +511,5 @@ Once connected, the workflow is the same for every server:
    STDIO rebuild the jar and hit **Restart** in the Inspector.
 
 Because the Inspector is just another MCP client, a server that works here will work
-unchanged in Claude Desktop, Claude Code, or your own Spring AI client app — that's the
+unchanged in Claude Code or your own Spring AI client app — that's the
 "write once, use everywhere" promise from section 7 in action.

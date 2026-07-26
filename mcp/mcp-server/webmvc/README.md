@@ -37,16 +37,13 @@ flowchart LR
     Server -- "RestClient" --> API
 ```
 
-In this project we build a **weather MCP server** from scratch on the servlet stack:
+- In this project we build a **weather MCP server** from scratch on the servlet stack:
 
 - **What it is** — an MCP server that any MCP client (Claude Desktop, MCP Inspector, a
   Spring AI agent) can connect to over the network and ask for live weather data.
 - **What it exposes** — two tools, `getWeatherForecastByLocation` (current conditions)
   and `getForecastWeatherByLocation` (multi-day forecast), backed by the real
   [weatherapi.com](https://www.weatherapi.com) REST API.
-- **How it's built** — a plain Spring Boot application plus a single starter,
-  `spring-ai-starter-mcp-server-webmvc`; the tools are ordinary service methods marked
-  with `@McpTool`, and auto-configuration wires up everything else.
 - **What stack it runs on** — Spring WebMVC / embedded Tomcat (the servlet stack), with
   blocking `SYNC` tool methods calling the weather API through `RestClient`.
 - **How clients reach it** — over the **streamable HTTP transport**: one `/mcp` endpoint
@@ -82,10 +79,10 @@ does all of it, driven by the `application.yml` shown later in this page.
 
 ## Exposing tools with `@McpTool`
 
-A tool is just a method on a Spring bean, annotated with **`@McpTool`**. The annotation
-scanner (part of the starter) discovers it at startup, derives the input schema from the
-method signature, and registers it with the server — no callbacks, no manual
-`ToolCallback` lists, no schema JSON to hand-write.
+- A tool is just a method on a Spring bean, annotated with **`@McpTool`**.
+- The annotation scanner (part of the starter) discovers it at startup.
+- It derives the input schema from the method signature automatically.
+- It registers the tool with the server — no callbacks, no manual `ToolCallback` lists, no schema JSON to hand-write.
 
 What each annotation contributes:
 
@@ -113,8 +110,6 @@ Full reference: [Spring AI — MCP Annotations (server)](https://docs.spring.io/
   log messages, no server-initiated MCP requests (sampling/elicitation).
 - And between requests there is no server→client channel at all.
 
-**Plain HTTP — one reply, then silence:**
-
 ```mermaid
 sequenceDiagram
     autonumber
@@ -137,13 +132,6 @@ sequenceDiagram
   - `Content-Type: text/event-stream` — the response becomes a **Server-Sent Events stream**
     for that one request: the server can emit many messages (progress notifications, logs,
     its own requests back to the client) and finishes with the final JSON-RPC response.
-- How the MCP Java SDK used here exercises that choice: `initialize` is answered with plain
-  `application/json`, but **every other request — including `tools/call` — is always answered
-  over SSE**. When a tool has nothing extra to say (this weather server), the stream simply
-  carries one event (the final result) and closes — a plain response in SSE clothing.
-- A `Mcp-Session-Id` header correlates requests into a session.
-- Streams are resumable (`Last-Event-ID`) after a dropped connection.
-
 **Streamable HTTP, fast tool — nothing extra to say (what this weather server does):**
 
 ```mermaid
@@ -175,7 +163,12 @@ sequenceDiagram
     Note over Client,Server: progress, logs, even server-initiated requests<br/>flow before the final result
 ```
 
-**In short:**
+- How the MCP Java SDK used here exercises that choice:
+  - `initialize` is answered with plain `application/json`.
+  - Every other request — including `tools/call` — is always answered over SSE.
+  - When a tool has nothing extra to say (this weather server), the stream carries one event (the final result) and closes — a plain response in SSE clothing.
+
+**Plain HTTP Compared with Streamable HTTP:**
 
 | | Plain HTTP | Streamable HTTP |
 |---|---|---|

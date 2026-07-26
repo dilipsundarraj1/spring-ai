@@ -1,13 +1,28 @@
 # MCP Transports and Spring AI's Support for Them
 
-- **MCP messages are plain JSON-RPC 2.0** — every request and response, on every
-  transport, is the same message format.
-  - *How is that different from JSON?* JSON is just a data format — it defines how to
-    write objects, arrays, and strings, but says nothing about what a message means.
-    JSON-RPC 2.0 is a small **protocol built on top of JSON**: it fixes the shape of a
-    remote call and its response. Both documents below are valid JSON, but only the
-    second one is a JSON-RPC message:
+<!-- TOC -->
+* [MCP Transports and Spring AI's Support for Them](#mcp-transports-and-spring-ais-support-for-them)
+    * [JSON](#json-)
+    * [JSON-RPC 2.0](#json-rpc-20)
+  * [1. The transports MCP defines](#1-the-transports-mcp-defines)
+    * [STDIO — local child process](#stdio--local-child-process)
+    * [Streamable HTTP — the networked standard](#streamable-http--the-networked-standard)
+      * [Option 1 — Stateful (the default)](#option-1--stateful-the-default)
+      * [Option 2 — Stateless](#option-2--stateless)
+    * [Choosing a transport](#choosing-a-transport)
+  * [2. How Spring AI supports every transport](#2-how-spring-ai-supports-every-transport)
+    * [Client side](#client-side)
+    * [Server side](#server-side)
+  * [References](#references)
+<!-- TOC -->
 
+**MCP messages are plain JSON-RPC 2.0** — every request and response, on every
+  transport, is the same message format.
+
+### JSON 
+  - *How is that different from JSON?*
+  - JSON is just a data format — it defines how to
+    write objects, arrays, and strings, but says nothing about what a message means.
     ```json
     // Plain JSON — just data; the receiver has no idea what to do with it
     {
@@ -15,6 +30,12 @@
       "unit": "celsius"
     }
     ```
+### JSON-RPC 2.0
+
+- JSON-RPC 2.0 is a small **protocol built on top of JSON**: it fixes the shape of a
+  remote call and its response.
+- Both documents below are valid JSON, but only the
+  second one is a JSON-RPC message:
 
     ```json
     // JSON-RPC 2.0 — the same data, wrapped as a *call*: invoke the method
@@ -30,15 +51,7 @@
     }
     ```
 
-    | Aspect | JSON | JSON-RPC 2.0 |
-    |---|---|---|
-    | What it is | A data *format* (syntax for objects, arrays, strings…) | A remote-procedure-call *protocol* whose messages are written in JSON |
-    | Answers the question | "How do I write structured data as text?" | "How do I ask another process to run a method and get the result back?" |
-    | Required structure | None — any valid document is fine | Fixed envelope: `jsonrpc: "2.0"`, `method`, optional `params`, and an `id` |
-    | Request/response link | Not a concept — there are no requests | Response echoes the request's `id`, so the client can match them up |
-    | Errors | Not a concept | Standard `error` object with `code` and `message` |
-    | One-way messages | Not a concept | A request without an `id` is a *notification* (no reply expected) |
-    | Relationship | Every JSON-RPC message is valid JSON | Not every JSON document is a JSON-RPC message |
+
 - **A *transport* answers one question:** how do those messages physically travel
   between the MCP client and the MCP server?
 - **The protocol never changes; only the wire does.** What the messages *say* is
@@ -73,27 +86,13 @@ Read it left to right: the client and the server always exchange the **same JSON
 messages** — the transport in the middle is just an interchangeable wire, chosen per
 connection.
 
-<!-- TOC -->
-* [MCP Transports and Spring AI's Support for Them](#mcp-transports-and-spring-ais-support-for-them)
-  * [1. The transports MCP defines](#1-the-transports-mcp-defines)
-    * [STDIO — local child process](#stdio--local-child-process)
-    * [Streamable HTTP — the networked standard](#streamable-http--the-networked-standard)
-      * [Option 1 — Stateful (the default)](#option-1--stateful-the-default)
-      * [Option 2 — Stateless](#option-2--stateless)
-    * [Choosing a transport](#choosing-a-transport)
-  * [2. How Spring AI supports every transport](#2-how-spring-ai-supports-every-transport)
-    * [Client side](#client-side)
-    * [Server side](#server-side)
-  * [References](#references)
-<!-- TOC -->
 
 ## 1. The transports MCP defines
 
 ### STDIO — local child process
 
 STDIO (standard input/output) is the simplest MCP transport: everything runs on one
-machine, with no network involved. It's the standard choice for servers that live on the
-user's own computer — the host application starts and manages the server itself.
+machine, with no network involved.
 
 The client **launches the server as a child process** and the two talk over the
 process's standard input and standard output: JSON-RPC requests go in via `stdin`,
@@ -135,8 +134,7 @@ server is deployed once — on a port, behind a URL, like any web application �
 number of clients connect to it remotely. If STDIO is "a tool on your machine",
 Streamable HTTP is "a service on the network".
 
-It is the current standard remote transport (it replaced HTTP + SSE in the 2025-03-26
-revision of the MCP spec). The server exposes a **single HTTP endpoint** (e.g. `/mcp`) that
+The server exposes a **single HTTP endpoint** (e.g. `/mcp`) that
 accepts JSON-RPC over `POST`; when the server needs to stream (progress updates,
 multiple messages for one request), the response upgrades to a Server-Sent-Events
 stream on that same endpoint.
@@ -156,27 +154,6 @@ flowchart LR
 Streamable HTTP comes in **two options**. The wire format is identical — they differ
 only in whether the server keeps a session:
 
-#### Option 1 — Stateful (the default)
-
-The server issues a session id (`Mcp-Session-Id` header) on initialize, and the client
-sends it with every subsequent request.
-
-- **Pros:** the session unlocks the full protocol — server → client features like
-  notifications, sampling, and elicitation.
-- **Cons:** scaling out needs session affinity (sticky sessions) or a shared session
-  store, since a client's requests must reach the instance that knows its session.
-
-#### Option 2 — Stateless
-
-The server keeps **no session state**: every request is self-contained, like a classic
-stateless REST API.
-
-- **Pros:** server restarts and horizontal scaling are invisible to clients — any
-  instance can serve any request, no sticky sessions behind the load balancer.
-- **Cons:** no server → client features (notifications, sampling, elicitation), since
-  those require a session to push into.
-- Clients don't need a special mode — a stateless server simply never issues a session
-  id.
 
 **When to use Streamable HTTP** (either option) — whenever the capability lives
 *behind a service*, not on the user's machine:
@@ -198,14 +175,14 @@ stateless REST API.
 
 ### Choosing a transport
 
-| | STDIO | Streamable HTTP | Stateless Streamable HTTP |
-|---|---|---|---|
-| **Wire** | stdin/stdout of a child process | one HTTP endpoint, SSE upgrade for streaming | same as Streamable HTTP |
-| **Reach** | local machine only | network | network |
-| **Clients per server** | exactly one | many | many |
-| **Sessions / server push** | yes (implicit — dedicated process) | yes (`Mcp-Session-Id`) | no |
-| **Scale out** | n/a | needs session affinity (or a shared session store) | trivially — any instance can serve any request |
-| **Use when…** | local tools, desktop hosts, dev | remote servers needing full protocol features | remote servers behind load balancers, simple tool-only servers |
+| | STDIO | Streamable HTTP |
+|---|---|---|
+| **Wire** | stdin/stdout of a child process | one HTTP endpoint, SSE upgrade for streaming |
+| **Reach** | local machine only | network |
+| **Clients per server** | exactly one | many |
+| **Sessions / server push** | yes (implicit — dedicated process) | yes (`Mcp-Session-Id`) |
+| **Scale out** | n/a | needs session affinity (or a shared session store) |
+| **Use when…** | local tools, desktop hosts, dev | remote servers needing full protocol features |
 
 ## 2. How Spring AI supports every transport
 
@@ -219,8 +196,8 @@ Two starters, depending on your stack:
 
 | Starter | Stack | Transports provided |
 |---|---|---|
-| `spring-ai-starter-mcp-client` | Servlet / plain | STDIO, Streamable HTTP, Stateless Streamable HTTP, SSE (Java `HttpClient` based) |
-| `spring-ai-starter-mcp-client-webflux` | Reactive | Streamable HTTP, Stateless Streamable HTTP, SSE (`WebClient` based, e.g. `WebClientStreamableHttpTransport`) |
+| `spring-ai-starter-mcp-client` | Servlet / plain | STDIO, Streamable HTTP, Stateless Streamable HTTP |
+| `spring-ai-starter-mcp-client-webflux` | Reactive | Streamable HTTP, Stateless Streamable HTTP |
 
 ```groovy
 // Servlet stack (this repo's mcp-client/webmvc)
@@ -280,8 +257,8 @@ Three starters — pick by transport and web stack:
 | Starter | Stack | Transports provided |
 |---|---|---|
 | `spring-ai-starter-mcp-server` | none (no web server) | STDIO |
-| `spring-ai-starter-mcp-server-webmvc` | Servlet (Tomcat) | Streamable HTTP, Stateless, SSE |
-| `spring-ai-starter-mcp-server-webflux` | Reactive (Netty) | Streamable HTTP, Stateless, SSE |
+| `spring-ai-starter-mcp-server-webmvc` | Servlet (Tomcat) | Streamable HTTP, Stateless |
+| `spring-ai-starter-mcp-server-webflux` | Reactive (Netty) | Streamable HTTP, Stateless |
 
 ```groovy
 // Servlet stack (this repo's mcp-server/webmvc and inventory-mcp-server)
@@ -302,7 +279,7 @@ spring:
         name: my-weather-server-webmvc
         version: 0.0.1
         type: SYNC
-        protocol: STREAMABLE            # STREAMABLE | STATELESS | SSE (legacy, default)
+        protocol: STREAMABLE            # STREAMABLE | STATELESS
         streamable-http:
           mcp-endpoint: /mcp            # same endpoint property is used by STATELESS mode
 ```
@@ -335,7 +312,6 @@ Spring AI maintains:
 |---|---|---|
 | Streamable HTTP | `WebMvcStreamableServerTransportProvider` | `WebFluxStreamableServerTransportProvider` |
 | Stateless | `WebMvcStatelessServerTransport` | `WebFluxStatelessServerTransport` |
-| SSE (legacy) | `WebMvcSseServerTransportProvider` | `WebFluxSseServerTransportProvider` |
 
 With the Boot starters you normally never touch these classes — auto-configuration
 instantiates the right one from the properties above.
