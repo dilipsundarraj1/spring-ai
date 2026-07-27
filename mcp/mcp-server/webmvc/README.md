@@ -326,6 +326,15 @@ In the browser UI select transport type **Streamable HTTP**, set the URL to
 
 ## Automated integration test
 
+**Why integration tests make sense for this app**
+
+- **Proves the full pipeline works** — from an incoming MCP request all the way to a
+  tool result, in one test.
+- **Catches wiring mistakes early** — misconfigured beans, wrong URLs, and missed
+  annotations only show up when the real context starts.
+- **No external dependency** — WireMock replaces weatherapi.com, so the test is offline
+  and runs reliably on every build.
+
 [`McpWeatherServerWebMvcIntegrationTest`](src/test/java/com/mcp/McpWeatherServerWebMvcIntegrationTest.java):
 
 - Talks **real MCP** to the server over streamable HTTP — no mocked protocol layer.
