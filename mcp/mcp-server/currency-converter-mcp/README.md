@@ -33,12 +33,11 @@ In this project we build a **currency-exchange MCP server** from scratch on the
 - **What it exposes** — one tool, `getCurrencyRates` (latest rates for a base currency,
   optionally filtered to specific symbols), backed by the real
   [openexchangerates.org](https://openexchangerates.org) REST API.
-- **How it's built** — a plain Spring Boot application plus a single starter,
-  `spring-ai-starter-mcp-server-webflux`; the tool is an ordinary service method marked
-  with `@McpTool`, and auto-configuration wires up everything else.
-- **What stack it runs on** — Spring WebFlux / Netty (the reactive stack), with
-  `type: ASYNC` tool methods returning `Mono` and calling the API through a non-blocking
-  `WebClient` — **non-blocking end to end**.
+- **How it's built and what stack it runs on** — a plain Spring Boot application with a
+  single starter, `spring-ai-starter-mcp-server-webflux`, on Spring WebFlux / Netty; the
+  tool is an ordinary service method marked with `@McpTool` returning `Mono`, calling the
+  API through a non-blocking `WebClient` — **non-blocking end to end**, with
+  auto-configuration wiring up everything else.
 - **How clients reach it** — over the **streamable HTTP transport**: one `/mcp` endpoint
   on port 8082.
 - **How it's verified** — interactively with **MCP Inspector**, and automatically with a
@@ -54,22 +53,6 @@ Turning a Spring Boot application into a reactive MCP server takes exactly one d
 implementation 'org.springframework.ai:spring-ai-starter-mcp-server-webflux'
 ```
 
-That single starter brings the whole stack:
-
-- **The MCP Java SDK** — the JSON-RPC 2.0 protocol implementation (initialize handshake,
-  `tools/list`, `tools/call`, sessions).
-- **The streamable HTTP transport for WebFlux** — auto-registers the single MCP endpoint
-  (`/mcp` by default) on the embedded **Netty** server that WebFlux runs on.
-- **Server auto-configuration** — builds and starts the `McpAsyncServer` (because
-  `spring.ai.mcp.server.type: ASYNC`) from `spring.ai.mcp.server.*` properties; no manual
-  wiring.
-- **Annotation scanning** — finds `@McpTool` methods on Spring beans and registers them
-  as MCP tools automatically, using the async adapter for `Mono`/`Flux` return types.
-
-The result: the [main class](src/main/java/com/mcp/McpServerApplication.java) is a plain
-`@SpringBootApplication` with zero MCP-specific code — the starter's auto-configuration
-does all of it, driven by the `application.yml` shown below.
-
 ## Reactive end to end — the WebFlux difference
 
 The [webmvc weather sibling](../webmvc/README.md) is blocking (`SYNC` on Tomcat): one
@@ -84,6 +67,17 @@ flowchart LR
     WC --> API["openexchangerates.org"]
 ```
 
+What that buys:
+
+- The `Mono` *describes* the work — nothing executes until the event loop subscribes to it.
+- The event loop registers interest in the response and **no thread ever waits** on
+  openexchangerates.org.
+- A handful of event-loop threads can hold thousands of slow calls in flight.
+- This end-to-end non-blocking chain is exactly where `ASYNC` is **the right fit**.
+- Reactive tool bodies on a servlet stack would only buy the programming style, not the
+  scalability.
+
+
 Layer by layer, compared to the webmvc sibling:
 
 | Layer | webmvc sibling (blocking) | This module (non-blocking) |
@@ -94,15 +88,34 @@ Layer by layer, compared to the webmvc sibling:
 | Tool signature | returns the value directly | returns `Mono<CurrencyResponse>` |
 | HTTP client | `RestClient` (thread waits) | `WebClient` (no thread waits) |
 
-What that buys:
 
-- The `Mono` *describes* the work — nothing executes until the event loop subscribes to it.
-- The event loop registers interest in the response and **no thread ever waits** on
-  openexchangerates.org.
-- A handful of event-loop threads can hold thousands of slow calls in flight.
-- This end-to-end non-blocking chain is exactly where `ASYNC` is **the right fit**.
-- Reactive tool bodies on a servlet stack would only buy the programming style, not the
-  scalability.
+## Transport configuration
+
+The transport is selected purely by configuration:
+
+```yaml
+server:
+  port: 8082
+
+spring:
+  ai:
+    mcp:
+      server:
+        name: currency-converter-mcp
+        version: 0.0.1
+        type: ASYNC               # reactive programming model -> McpAsyncServer
+        protocol: STREAMABLE      # streamable HTTP
+        streamable-http:
+          mcp-endpoint: /mcp      # the default; shown for clarity
+
+currency-exchange:
+  api-key: ${CURRENCY_EXCHANGE_API_KEY}   # your openexchangerates.org App ID
+  base-url: https://openexchangerates.org/api
+```
+
+A `STATELESS` alternative exists (`protocol: STATELESS`): no sessions, so server restarts
+and horizontal scaling are invisible to clients — at the cost of server→client features
+like notifications, sampling, and elicitation.
 
 
 ## Code example
@@ -156,37 +169,6 @@ Things to note:
 |---|---|---|
 | `getCurrencyRates` | `base` (optional, defaults to `USD`), `symbols` (optional, comma separated e.g. `EUR,GBP,INR`; all currencies when omitted) | `GET /api/latest.json` |
 
-## Transport configuration
-
-The transport is selected purely by configuration:
-
-```yaml
-server:
-  port: 8082
-
-spring:
-  ai:
-    mcp:
-      server:
-        name: currency-converter-mcp
-        version: 0.0.1
-        type: ASYNC               # reactive programming model -> McpAsyncServer
-        protocol: STREAMABLE      # streamable HTTP
-        streamable-http:
-          mcp-endpoint: /mcp      # the default; shown for clarity
-
-currency-exchange:
-  api-key: ${CURRENCY_EXCHANGE_API_KEY}   # your openexchangerates.org App ID
-  base-url: https://openexchangerates.org/api
-```
-
-A `STATELESS` alternative exists (`protocol: STATELESS`): no sessions, so server restarts
-and horizontal scaling are invisible to clients — at the cost of server→client features
-like notifications, sampling, and elicitation.
-
-For a deep dive into what streamable HTTP is and how it behaves on the wire, see the
-[webmvc sibling's "What is streamable HTTP?"](../webmvc/README.md#what-is-streamable-http)
-— everything there applies here unchanged.
 
 ## Running the server
 
