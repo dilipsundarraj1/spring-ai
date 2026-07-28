@@ -456,6 +456,16 @@ sequenceDiagram
 
 ### What SYNC means (this module)
 
+```mermaid
+flowchart TD
+    Client["MCP client"]
+    subgraph thread ["🔒 Tomcat servlet thread — locked for the full duration"]
+        Tool["@McpTool method<br/>plain blocking Java —<br/>returns the value directly"]
+    end
+    Client --> thread
+    Tool -- "RestClient.get()<br/>🔒 thread parked here<br/>until weatherapi.com replies" --> API["weatherapi.com"]
+```
+
 - `SYNC` builds an `McpSyncServer`: tool methods are plain blocking Java.
 - When a `tools/call` arrives, a Tomcat worker thread enters
   `getWeatherForecastByLocation`, sits **blocked inside the `RestClient` call** until
@@ -489,18 +499,6 @@ runtime underneath is unchanged.
 the work, an event loop registers interest in the response, and a handful of threads serve
 thousands of in-flight calls because none of them ever waits.
 
-**What it takes:**
-
-- Keep the `spring-ai-starter-mcp-server-webmvc` dependency; just set `type: ASYNC`.
-- Tool methods must now return `Mono`/`Flux`.
-- Anything blocking (`RestClient`, JDBC) **must** be wrapped off the shared threads —
-  blocking inside a `Mono` chain is how reactive apps deadlock:
-
-  ```java
-  return Mono.fromCallable(() -> restClient.get()...body(WeatherResponse.class))
-      .subscribeOn(Schedulers.boundedElastic());   // blocking work off the caller's thread
-  ```
-
 **What you get:** the reactive *programming style* — compose calls (`Mono.zip` to fan out
 to several APIs), add timeouts/retries declaratively, stream partial results, and write
 tool signatures that can later move to `webflux` unchanged.
@@ -508,10 +506,6 @@ tool signatures that can later move to `webflux` unchanged.
 **What you don't get:** a non-blocking *runtime*. The server underneath is still Tomcat —
 every request still occupies a servlet thread, so scalability does not improve, no matter
 how reactive the tool bodies look.
-
-**The cost:** reactive types infect the whole call chain — one accidental `.block()` on an
-event loop defeats or deadlocks it — and debugging gets harder: stack traces are scheduler
-frames instead of your call path.
 
 **When it makes sense:**
 
@@ -567,10 +561,7 @@ the result, and no thread waits for the downstream call. Three coordinated chang
 
 ### ASYNC done right — end-to-end non-blocking
 
-The lesson from the half-step above: **ASYNC only pays off when the *entire* chain is
-non-blocking — the server runtime *and* the tool code.** A single blocking link (Tomcat's
-servlet threads, or one blocking client call) puts you right back to thread-per-request
-economics, no matter how reactive the rest looks.
+- **ASYNC only pays off when the *entire* chain is non-blocking** — the server runtime *and* the tool code.
 
 What "end to end" means, layer by layer:
 
@@ -581,11 +572,11 @@ What "end to end" means, layer by layer:
 | Tool signature | returns the value directly | returns `Mono`/`Flux` |
 | HTTP client | `RestClient` (thread waits) | `WebClient` (no thread waits) |
 
-> ✅ **The right fit: the [`webflux` sibling module](../webflux/README.md).** It combines
-> `spring-ai-starter-mcp-server-webflux`, `type: ASYNC`, and `WebClient` tools — every
-> link from Netty to the outgoing weather call is non-blocking, so a handful of
-> event-loop threads can hold thousands of slow calls in flight. That is where the
-> event-loop economics actually materialize.
+> ✅ **The right fit: the [`webflux` sibling module](../webflux/README.md).**
+> - Uses `spring-ai-starter-mcp-server-webflux` with `type: ASYNC` and `WebClient` tools.
+> - Every link from Netty to the outgoing weather call is non-blocking.
+> - A handful of event-loop threads can hold thousands of slow calls in flight.
+> - That is where the event-loop economics actually materialize.
 
 ## Streamable HTTP — the optional listening channel
 
