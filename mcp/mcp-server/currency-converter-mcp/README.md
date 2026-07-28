@@ -3,8 +3,8 @@
 * [MCP Currency Converter Server (Streamable HTTP / WebFlux)](#mcp-currency-converter-server-streamable-http--webflux)
   * [Building the server with `spring-ai-starter-mcp-server-webflux`](#building-the-server-with-spring-ai-starter-mcp-server-webflux)
   * [Reactive end to end — the WebFlux difference](#reactive-end-to-end--the-webflux-difference)
-  * [Code example](#code-example)
   * [Transport configuration](#transport-configuration)
+  * [Code example](#code-example)
   * [Running the server](#running-the-server)
     * [Option 1: Run with Gradle (`bootRun`)](#option-1-run-with-gradle-bootrun)
     * [Option 2: Build the jar and run it](#option-2-build-the-jar-and-run-it)
@@ -215,11 +215,99 @@ In the browser UI select transport type **Streamable HTTP**, set the URL to
 
 ## Automated integration test
 
-[`McpCurrencyConverterIntegrationTest`](src/test/java/com/mcp/McpCurrencyConverterIntegrationTest.java)
-talks real MCP to the server over streamable HTTP, while the openexchangerates.org
-backend is replaced by a **WireMock stub**. That way the entire pipeline — MCP
-`tools/call` → `CurrencyTools` → `WebClient` → JSON deserialization → tool result — runs
-deterministically on every build: offline, no API key, no rate limits, no flakiness.
+**Why integration tests make sense for this app**
+
+- **Proves the full pipeline works** — from an incoming MCP request all the way to a
+  tool result, in one test.
+- **Catches wiring mistakes early** — misconfigured beans, wrong URLs, and missed
+  annotations only show up when the real context starts.
+- **No external dependency** — WireMock replaces openexchangerates.org, so the test is
+  offline and runs reliably on every build.
+
+[`McpCurrencyConverterIntegrationTest`](src/test/java/com/mcp/McpCurrencyConverterIntegrationTest.java):
+
+- Talks **real MCP** to the server over streamable HTTP — no mocked protocol layer.
+- Replaces only the openexchangerates.org backend with a **WireMock stub**.
+- Exercises the entire pipeline: MCP `tools/call` → `CurrencyTools` → `WebClient` →
+  JSON deserialization → tool result.
+- Runs deterministically on every build: offline, no API key, no rate limits, no
+  flakiness.
+
+### Test SetUp and How Wiremock is integrated ?
+
+The flow as sequence diagrams — setup first, then one happy-path tool call, then the
+stubbed failure path. Everything runs inside the one test JVM.
+
+#### Setup
+
+WireMock starts before the Spring context so its URL can be injected as the exchange API
+base URL; then the stubs are registered and the MCP client performs the `initialize`
+handshake:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Test as JUnit test
+    participant Client as McpSyncClient<br/>(streamable HTTP)
+    participant Server as Spring Boot MCP server<br/>(Netty, /mcp, random port)
+    participant WireMock as WireMock stub<br/>(dynamic port)
+
+    Test->>WireMock: start (@DynamicPropertySource)
+    Test->>Server: boot context (@SpringBootTest RANDOM_PORT)<br/>currency-exchange.base-url = wireMock.baseUrl()
+    Test->>WireMock: register stubs (@BeforeAll)
+    Test->>Client: initialize()
+    Client->>Server: POST /mcp — initialize
+    Server-->>Client: serverInfo: currency-converter-mcp
+```
+
+#### Happy path
+
+A real `tools/call` travels the whole pipeline; the stub answers with canned JSON, and
+the assertions check its values come back through deserialization:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Test as JUnit test
+    participant Client as McpSyncClient<br/>(streamable HTTP)
+    participant Server as Spring Boot MCP server<br/>(Netty, /mcp, random port)
+    participant Service as CurrencyTools<br/>(WebClient)
+    participant WireMock as WireMock stub<br/>(dynamic port)
+
+    Test->>Client: callTool(base = USD, symbols = EUR,GBP)
+    Client->>Server: POST /mcp — tools/call
+    Server->>Service: getCurrencyRates("USD", "EUR,GBP")
+    Service->>WireMock: GET /latest.json?app_id=test-key&base=USD&symbols=EUR,GBP
+    WireMock-->>Service: 200 latest_response.json
+    Service-->>Server: CurrencyResponse (deserialized records)
+    Server-->>Client: tool result
+    Client-->>Test: assert rates for EUR, GBP present
+```
+
+#### Failure path
+
+The stub replies with a 403 (openexchangerates.org's free-plan restriction for non-USD
+base); the service throws, and the client receives an MCP tool result flagged `isError`
+— the server keeps running:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Test as JUnit test
+    participant Client as McpSyncClient<br/>(streamable HTTP)
+    participant Server as Spring Boot MCP server<br/>(Netty, /mcp, random port)
+    participant Service as CurrencyTools<br/>(WebClient)
+    participant WireMock as WireMock stub<br/>(dynamic port)
+
+    Test->>Client: callTool(base = EUR)
+    Client->>Server: POST /mcp — tools/call
+    Server->>Service: getCurrencyRates("EUR", null)
+    Service->>WireMock: GET /latest.json?app_id=test-key&base=EUR
+    WireMock-->>Service: 403 free-plan restriction
+    Service-->>Server: throws CurrencyApiException
+    Server-->>Client: tool result with isError = true
+    Client-->>Test: assert isError
+```
 
 ### How it works, step by step
 
