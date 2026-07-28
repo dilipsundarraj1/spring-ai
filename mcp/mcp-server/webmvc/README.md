@@ -594,3 +594,10 @@ sequenceDiagram
     Server-->>Client: event: notification "tool list changed"
     Note over Client,Server: server can speak between requests —<br/>resumable via Last-Event-ID after a drop
 ```
+
+**When does a tool list actually change?** Some real-world scenarios:
+
+- **Dynamic integration wiring** — a user authenticates a GitHub account mid-session; the server registers a `searchGitHubIssues` tool on the fly and notifies the client immediately — no restart needed.
+- **External service going down** — the server health-checks an upstream API; when it becomes unavailable the server deregisters the tool so the LLM never calls something that will always fail, and re-registers it when the service recovers.
+- **Permission changes** — an admin grants a user elevated access mid-session; the server exposes new privileged tools without dropping the connection.
+- **Condition-gated tools** — a `summarizeDailyReport` tool only exists after the nightly batch job completes; the server registers it when the job finishes and pushes the notification so the LLM sees it straight away.
