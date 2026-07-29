@@ -26,7 +26,6 @@
     * [Putting the approaches together](#putting-the-approaches-together)
   * [4. The pipeline every client follows](#4-the-pipeline-every-client-follows)
   * [5. What we build in this section](#5-what-we-build-in-this-section)
-  * [6. Key takeaways](#6-key-takeaways)
   * [References](#references)
 <!-- TOC -->
 
@@ -85,11 +84,9 @@ flowchart LR
         CC["ChatClient<br/>(talks to the LLM)"]
         MC1["MCP Client 1"]
         MC2["MCP Client 2"]
-        MC3["MCP Client 3"]
         Ctrl --> CC
         CC <--> MC1
         CC <--> MC2
-        CC <--> MC3
     end
 
     LLM["LLM<br/>(e.g. OpenAI)"]
@@ -97,7 +94,6 @@ flowchart LR
 
     MC1 <-- MCP --> W["Weather server<br/>:8081/mcp"]
     MC2 <-- MCP --> X["Currency server<br/>:8082/mcp"]
-    MC3 <-- MCP --> I["Inventory server<br/>:8083/mcp"]
 ```
 
 The host app has exactly two jobs, and Spring AI provides a building block for each:
@@ -200,15 +196,6 @@ Why the matched pairings, and not a mix?
   streaming. A SYNC client here would block an event-loop thread on every tool call —
   the one thing that breaks the reactive model.
 
-That is why the two apps in this repo sit exactly at these two corners:
-
-| Flow | [`mcp-client/webmvc`](../mcp-client/webmvc) — SYNC | [`mcp-client/webflux`](../mcp-client/webflux) — ASYNC |
-|---|---|---|
-| Starter | `spring-ai-starter-mcp-client` | `spring-ai-starter-mcp-client-webflux` |
-| Model | `SYNC` → `McpSyncClient` | `ASYNC` → `McpAsyncClient` |
-| Transport | Streamable HTTP × 3 servers | Streamable HTTP × 3 servers |
-| Port | 9000 | 9001 |
-| `/chat` returns | `String` (blocking) | `Mono<String>`, plus a streaming `/chat/stream` (`Flux<String>`, SSE) |
 
 The other combinations are legitimate too (a WebFlux starter can run `SYNC`, for
 example) — but these two pairings are the idiomatic ones, and the ones we build.
@@ -250,9 +237,9 @@ flowchart LR
    `tools/call` to the right server and feeds the result back into the conversation.
 
 Tools from *all* connected servers land in one flat list, so the model sees weather,
-currency, and inventory tools side by side and picks the right one per question —
+currency tools side by side and picks the right one per question —
 that's the **M + N promise** from the [intro README](../README.md) working in our favor:
-adding a fourth server is one more YAML block, zero new code.
+adding a third server is one more YAML block, zero new code.
 
 ## 5. What we build in this section
 
@@ -264,33 +251,15 @@ using whichever MCP tools it needs:
 curl "http://localhost:9000/chat?question=Is+it+warmer+in+Chicago+or+Seattle+today%3F"
 
 # webflux host (port 9001) — same, plus token-by-token streaming
-curl -N "http://localhost:9001/chat/stream?question=How+many+MacBooks+are+in+stock%3F"
+curl -N "http://localhost:9001/chat/stream?question=What+is+the+EUR+to+USD+exchange+rate%3F"
 ```
 
-Each app connects to the three servers built in the server section (weather `:8081`,
-currency converter `:8082`, inventory `:8083`). The per-app READMEs cover what this
-intro deliberately skips: the exact auto-configuration beans, SYNC/ASYNC internals and
-their gotchas (e.g. why the WebFlux app resolves tool callbacks at startup rather than
-on an event-loop thread), tool-call logging, and integration testing with fake MCP
-servers plus a WireMock-stubbed LLM.
+Each app connects to the two servers built in the server section (weather `:8081`,
+currency converter `:8082`).
 
 - ➡️ [`mcp-client/webmvc`](../mcp-client/webmvc) — the Servlet/SYNC host
 - ➡️ [`mcp-client/webflux`](../mcp-client/webflux) — the Reactive/ASYNC host
 
-## 6. Key takeaways
-
-- The MCP client is the **connector inside the host** — one per server, pure plumbing;
-  the LLM decides, the client transports.
-- With Spring AI, **your Spring Boot app is the host**: a model starter provides the
-  `ChatClient`, an MCP client starter provides the clients — from YAML, not code.
-- The "kinds" of MCP clients are two independent choices: **stack** (WebMVC starter
-  vs WebFlux starter) and **model** (`SYNC` vs `ASYNC`).
-- Keep each flow consistent end to end: **WebMVC + SYNC** (blocking all the way) and
-  **WebFlux + ASYNC** (non-blocking all the way) — mixing them forfeits the benefit of
-  either model. These are the two apps we build.
-- Every combination converges on the same pipeline:
-  `application.yml → client beans → ToolCallbackProvider → ChatClient` — application
-  code never sees the stack or the programming model.
 
 ## References
 
