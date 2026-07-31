@@ -1,6 +1,46 @@
 # Inventory MCP Server
 
+## Table of Contents
+
+<!-- TOC -->
+* [Inventory MCP Server](#inventory-mcp-server)
+  * [Table of Contents](#table-of-contents)
+  * [Introduction](#introduction)
+  * [Inventory Service : Endpoints](#inventory-service--endpoints)
+  * [Run](#run)
+  * [API docs (Swagger)](#api-docs-swagger)
+  * [Persistence](#persistence)
+  * [MCP tools](#mcp-tools)
+    * [Dependency (`build.gradle`)](#dependency-buildgradle)
+    * [Design decisions](#design-decisions)
+    * [MCP server configuration (`application.yml`)](#mcp-server-configuration-applicationyml)
+    * [Available tools](#available-tools)
+    * [Implementation (`InventoryTools.java`)](#implementation-inventorytoolsjava)
+  * [Test](#test)
+<!-- TOC -->
+
 ## Introduction
+
+- There are thousands of REST APIs already running in production today — APIs that have been built,
+  tested, and trusted for years. They already contain all the business logic, data access, and
+  validation your application needs.
+- With AI applications and agents becoming mainstream, a new requirement is emerging: **how do you
+  make these existing APIs available to an LLM?**
+- This is exactly what this module demonstrates. Take a  fully working
+  Spring Boot REST API that we extend with MCP tool support — **without rewriting anything**. The
+  REST API stays exactly as it is; we simply add a thin MCP layer on top of selected operations so
+  that an LLM agent can discover and call them through natural language.
+- The Inventory REST API is a simple electronics e-commerce inventory service that exposes a REST API for the full inventory
+  lifecycle (add, update, delete, list, search). The read operations are also exposed as MCP tools
+  over Streamable HTTP so LLM agents can query the inventory.
+- This pattern applies to any existing REST API. If you have an API in production today, you can
+  follow the same approach to make it part of your AI application stack.
+
+---
+
+
+
+## Inventory Service : Endpoints
 
 The Inventory Service is the system of record for the product catalog and stock levels of an
 electronics e-commerce store.
@@ -14,19 +54,7 @@ electronics e-commerce store.
   - Look items up by product id, product type or name.
   - Remove items that are no longer sold.
 - Ships with sample electronics data so the API is usable immediately after startup.
-- Exposes the read operations as **MCP tools** over streamable HTTP, so LLM agents can query the inventory.
-
-## Table of Contents
-
-- [Introduction](#introduction)
-- [Endpoints](#endpoints)
-- [MCP tools](#mcp-tools)
-- [API docs (Swagger)](#api-docs-swagger)
-- [Persistence](#persistence)
-- [Run](#run)
-- [Test](#test)
-
-## Endpoints
+- Exposes the **read operations as MCP tools** over Streamable HTTP so LLM agents can query the inventory — write operations remain REST-only by design.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -40,40 +68,18 @@ electronics e-commerce store.
 
 Validation errors return `400` with an RFC 7807 problem detail listing the field errors.
 
-## MCP tools
+## Run
 
-The read side of the inventory is also exposed as MCP tools (`SYNC` server, `STREAMABLE` protocol,
-endpoint `http://localhost:8083/mcp`), following the same pattern as `currency-converter-mcp`:
-
-| Tool | Description |
-|------|-------------|
-| `getInventoryItemByProductId` | Get one item by its productId (tool error if unknown) |
-| `getInventoryItemsByProductType` | List items for a product type (e.g. `MOBILE`, `LAPTOP`) |
-| `searchInventoryItemsByProductName` | Case-insensitive partial name search |
-| `getAllInventoryItems` | List the full inventory |
-
-The tools are implemented in `InventoryTools` with `@McpTool` / `@McpToolParam` and delegate to the
-same `InventoryService` the REST controller uses. Write operations (add/update/delete) are
-deliberately REST-only.
-
-Example client config (e.g. for an MCP client / Claude Desktop via streamable HTTP):
-
-```json
-{
-  "mcpServers": {
-    "inventory": {
-      "url": "http://localhost:8083/mcp"
-    }
-  }
-}
+```bash
+./gradlew :mcp:mcp-server:inventory-mcp-server:bootRun
 ```
 
 ## API docs (Swagger)
 
 With the server running:
 
-- Swagger UI: <http://localhost:8083/swagger-ui.html>
-- OpenAPI spec (JSON): <http://localhost:8083/v3/api-docs>
+- Swagger UI: <http://localhost:8085/swagger-ui.html>
+- OpenAPI spec (JSON): <http://localhost:8085/v3/api-docs>
 
 ## Persistence
 
@@ -82,48 +88,103 @@ Hibernate and seeded at startup from `src/main/resources/data.sql` with 18 sampl
 covering every product type and stock status (including a `DISCONTINUED` legacy phone and a couple of
 `OUT_OF_STOCK` / `LOW_STOCK` items). The H2 console is available at `http://localhost:8083/h2-console`.
 
-## Run
+## MCP tools
 
-```bash
-./gradlew :mcp:mcp-server:inventory-mcp-server:bootRun
+The Inventory REST API is a fully working Spring Boot service. To make it available to LLM agents,
+we introduce a thin **MCP (Model Context Protocol) layer on top of the existing read operations** —
+without touching the REST controller or service layer.
+
+### Dependency (`build.gradle`)
+
+```groovy
+// mcp server
+implementation 'org.springframework.ai:spring-ai-starter-mcp-server-webmvc'
 ```
 
-The server starts on port **8083**.
+`spring-ai-starter-mcp-server-webmvc` auto-configures the MCP server on top of Spring MVC
+(blocking / servlet stack), registers all `@McpTool`-annotated beans as tools, and exposes the
+streamable-HTTP endpoint with zero boilerplate.
 
-```bash
-# all items
-curl http://localhost:8083/v1/inventory
+> **Note — one server, two protocols.**
+> The `-webmvc` variant mounts the MCP endpoint directly onto the existing Tomcat servlet container
+> that already serves the REST API. There is no second process, no second port, and no extra
+> infrastructure: the REST API and the MCP endpoint coexist on the same port (`8085`), served by the
+> same thread pool. Adding the dependency is all it takes to layer MCP capability on top of an
+> existing Spring MVC application.
 
-# by product type
-curl "http://localhost:8083/v1/inventory?productType=MOBILE"
+### Design decisions
 
-# by product name (contains, case-insensitive)
-curl "http://localhost:8083/v1/inventory?productName=macbook"
+| Decision | Rationale |
+|----------|-----------|
+| Read-only tools | Write operations (add / update / delete) carry side-effects — keeping them REST-only makes the agent surface predictable and auditable. |
+| Delegate to `InventoryService` | MCP tools call the exact same service methods as the REST controller; no logic is duplicated. |
+| `SYNC` / `STREAMABLE` | `SYNC` fits a blocking JPA-backed service. `STREAMABLE` HTTP is the modern MCP transport that supports SSE progress events. |
 
-# by product id
-curl http://localhost:8083/v1/inventory/7f2c1a3e-9b4d-4c5f-8e6a-1d2b3c4d5e6f
+### MCP server configuration (`application.yml`)
 
-# add an item
-curl -X POST http://localhost:8083/v1/inventory \
-  -H "Content-Type: application/json" \
-  -d '{
-        "sku": "CAM-SNY-A7V",
-        "productName": "Sony Alpha 7 V",
-        "productType": "CAMERA",
-        "brand": "Sony",
-        "description": "Full-frame mirrorless camera body",
-        "price": 2699.99,
-        "availableQuantity": 12
-      }'
-
-# update an item
-curl -X PUT http://localhost:8083/v1/inventory/{productId} \
-  -H "Content-Type: application/json" \
-  -d '{ "sku": "...", "productName": "...", "productType": "MOBILE", "brand": "...", "price": 999.00, "availableQuantity": 3 }'
-
-# delete an item
-curl -X DELETE http://localhost:8083/v1/inventory/{productId}
+```yaml
+spring:
+  ai:
+    mcp:
+      server:
+        name: inventory-mcp-server
+        version: 0.0.1
+        type: SYNC
+        protocol: STREAMABLE
+        streamable-http:
+          mcp-endpoint: /mcp
 ```
+
+MCP endpoint: `http://localhost:8085/mcp`
+
+### Available tools
+
+| Tool | Parameters | Returns | Description |
+|------|------------|---------|-------------|
+| `getInventoryItemByProductId` | `productId` — UUID string | `InventoryItem` | Fetch a single item; raises a tool error if the id is unknown |
+| `getInventoryItemsByProductType` | `productType` — e.g. `MOBILE`, `LAPTOP`, `TV` | `List<InventoryItem>` | All items for a given product category |
+| `searchInventoryItemsByProductName` | `productName` — partial, case-insensitive | `List<InventoryItem>` | Name-fragment search, e.g. `"iphone"` or `"watch"` |
+| `getAllInventoryItems` | — | `List<InventoryItem>` | Full inventory with prices, quantities, and stock status |
+
+### Implementation (`InventoryTools.java`)
+
+Tools are declared with Spring AI's `@McpTool` and `@McpToolParam` annotations and delegate
+directly to `InventoryService`:
+
+```java
+@Service
+public class InventoryTools {
+
+    @McpTool(description = "Get a single inventory item of the electronics store by its productId.")
+    public InventoryItem getInventoryItemByProductId(
+            @McpToolParam(description = "The unique productId (UUID) of the inventory item")
+            String productId) {
+        return inventoryService.getItemByProductId(productId);
+    }
+
+    @McpTool(description = "List all inventory items for a given product type.")
+    public List<InventoryItem> getInventoryItemsByProductType(
+            @McpToolParam(description = "The product type to filter by, e.g. MOBILE, LAPTOP, TV")
+            ProductType productType) {
+        return inventoryService.getItemsByProductType(productType);
+    }
+
+    @McpTool(description = "Search inventory items by product name (case-insensitive, partial match).")
+    public List<InventoryItem> searchInventoryItemsByProductName(
+            @McpToolParam(description = "Full or partial product name to search for")
+            String productName) {
+        return inventoryService.searchItemsByProductName(productName);
+    }
+
+    @McpTool(description = "List every inventory item including price, quantity and stock status.")
+    public List<InventoryItem> getAllInventoryItems() {
+        return inventoryService.getAllItems();
+    }
+}
+```
+
+- `@McpTool` — registers the method as a callable MCP tool and provides the natural-language description the LLM uses to decide which tool to invoke.
+- `@McpToolParam` — documents each parameter so the model knows what value to supply when calling the tool.
 
 ## Test
 

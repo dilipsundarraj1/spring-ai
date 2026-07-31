@@ -1,8 +1,8 @@
 <!-- TOC -->
 * [MCP Client (WebFlux)](#mcp-client-webflux)
+    * [Architecture at a glance](#architecture-at-a-glance)
   * [How it differs from the WebMVC client](#how-it-differs-from-the-webmvc-client)
   * [How it works](#how-it-works)
-    * [Architecture at a glance](#architecture-at-a-glance)
     * [Reactive endpoints](#reactive-endpoints)
   * [Where MCP shines: new capabilities without new integration code](#where-mcp-shines-new-capabilities-without-new-integration-code)
   * [Running](#running)
@@ -11,8 +11,33 @@
 
 # MCP Client (WebFlux)
 
-- A Spring Boot MCP **client** that connects to three MCP servers over **Streamable HTTP** — the [MCP Weather Server (WebFlux)](../../mcp-server/webflux), the [Currency Converter MCP Server](../../mcp-server/currency-converter-mcp) and the [Inventory MCP Server](../../mcp-server/inventory-mcp-server) — and exposes their tools to a single OpenAI-backed `ChatClient`.
+- A Spring Boot MCP **client** that connects to two MCP servers over **Streamable HTTP** — the [MCP Weather Server (WebFlux)](../../mcp-server/webflux) and the [Currency Converter MCP Server](../../mcp-server/currency-converter-mcp) — and exposes their tools to a single OpenAI-backed `ChatClient`.
 - It is the fully **reactive** counterpart of the [WebMVC client](../webmvc).
+
+### Architecture at a glance
+
+```mermaid
+flowchart LR
+    U["curl"] -- "GET /chat<br/>GET /chat/stream (SSE)" --> CC
+
+    subgraph APP["MCP Client app (WebFlux, :9001, Netty)"]
+        CC["ChatController<br/>Mono / Flux"] --> CH["ChatClient"]
+        CH -- "invoke requested tool<br/>(tool callback)" --> TP["AsyncMcpToolCallbackProvider<br/>one flat tool list"]
+        TP -- "delegate to<br/>owning client" --> C1["McpAsyncClient<br/>(weather-server)"]
+        TP -- "delegate to<br/>owning client" --> C2["McpAsyncClient<br/>(currency-converter)"]
+    end
+
+    CH <-- "prompt + tool schemas →<br/>← tool-call request<br/>tool result →<br/>← final answer / token stream" --> LLM["OpenAI LLM"]
+
+    C1 -- "tools/call<br/>Streamable HTTP :8081/mcp<br/>(non-blocking WebClient)" --> WS["Weather MCP Server"]
+    C2 -- "tools/call<br/>Streamable HTTP :8082/mcp<br/>(non-blocking WebClient)" --> XS["Currency MCP Server"]
+
+    WS --> WA["weatherapi.com"]
+    XS --> OX["openexchangerates.org"]
+```
+
+- The `ChatClient` sends every question to the LLM together with the tool schemas discovered from **all** servers; when the LLM asks for a tool, the provider delegates the `tools/call` to the `McpAsyncClient` of whichever server owns it.
+- Nothing in this pipeline blocks: MCP calls ride a reactive `WebClient`, and on `/chat/stream` the LLM's tokens flow straight through to the caller as Server-Sent Events.
 
 ## How it differs from the WebMVC client
 
@@ -31,7 +56,7 @@ Everything else — the Streamable HTTP protocol, the stateful vs. stateless ses
 ## How it works
 
 - Uses the [`spring-ai-starter-mcp-client-webflux`](https://docs.spring.io/spring-ai/reference/api/mcp/mcp-client-boot-starter-docs.html) Boot starter with `ASYNC` clients.
-- Connects to the WebFlux weather server at `http://localhost:8081/mcp`, the currency converter at `http://localhost:8082/mcp` and the inventory server at `http://localhost:8083/mcp` (see `application.yml`):
+- Connects to the WebFlux weather server at `http://localhost:8081/mcp` and the currency converter at `http://localhost:8082/mcp` (see `application.yml`):
 
 ```yaml
 spring:
@@ -47,42 +72,13 @@ spring:
             currency-converter:
               url: http://localhost:8082
               endpoint: /mcp
-            inventory-server:
-              url: http://localhost:8083
-              endpoint: /mcp
 ```
 
 - The starter creates one `McpAsyncClient` **per connection entry**, auto-discovers every server's tools, and merges them into a single `ToolCallbackProvider`. `ChatController` registers its callbacks on the `ChatClient` via `defaultToolCallbacks(...)`, resolved once at startup (the async provider blocks on `tools/list`, which is not allowed on a Netty event-loop thread).
 - The LLM sees one flat tool list and picks the right server's tool per question — adding another server is just another `connections:` entry, no code changes.
 - On startup, `McpClientApplication` logs each connected server's tools reactively, via `McpAsyncClient.listTools()` which returns a `Mono`.
 
-### Architecture at a glance
 
-```mermaid
-flowchart LR
-    U["curl"] -- "GET /chat<br/>GET /chat/stream (SSE)" --> CC
-
-    subgraph APP["MCP Client app (WebFlux, :9001, Netty)"]
-        CC["ChatController<br/>Mono / Flux"] --> CH["ChatClient"]
-        CH -- "invoke requested tool<br/>(tool callback)" --> TP["AsyncMcpToolCallbackProvider<br/>one flat tool list"]
-        TP -- "delegate to<br/>owning client" --> C1["McpAsyncClient<br/>(weather-server)"]
-        TP -- "delegate to<br/>owning client" --> C2["McpAsyncClient<br/>(currency-converter)"]
-        TP -- "delegate to<br/>owning client" --> C3["McpAsyncClient<br/>(inventory-server)"]
-    end
-
-    CH <-- "prompt + tool schemas →<br/>← tool-call request<br/>tool result →<br/>← final answer / token stream" --> LLM["OpenAI LLM"]
-
-    C1 -- "tools/call<br/>Streamable HTTP :8081/mcp<br/>(non-blocking WebClient)" --> WS["Weather MCP Server"]
-    C2 -- "tools/call<br/>Streamable HTTP :8082/mcp<br/>(non-blocking WebClient)" --> XS["Currency MCP Server"]
-    C3 -- "tools/call<br/>Streamable HTTP :8083/mcp<br/>(non-blocking WebClient)" --> IS["Inventory MCP Server"]
-
-    WS --> WA["weatherapi.com"]
-    XS --> OX["openexchangerates.org"]
-    IS --> DB[("H2 inventory DB")]
-```
-
-- The `ChatClient` sends every question to the LLM together with the tool schemas discovered from **all** servers; when the LLM asks for a tool, the provider delegates the `tools/call` to the `McpAsyncClient` of whichever server owns it.
-- Nothing in this pipeline blocks: MCP calls ride a reactive `WebClient`, and on `/chat/stream` the LLM's tokens flow straight through to the caller as Server-Sent Events.
 
 
 ### Reactive endpoints
@@ -131,32 +127,21 @@ See the [WebMVC client's section](../webmvc/README.md#where-mcp-shines-new-capab
    CURRENCY_EXCHANGE_API_KEY=<your-openexchangerates-key> ./gradlew :mcp:mcp-server:currency-converter-mcp:bootRun
    ```
 
-3. Start the inventory server (in another terminal, listens on **8083** — no API key needed):
-
-   ```bash
-   ./gradlew :mcp:mcp-server:inventory-mcp-server:bootRun
-   ```
-
-4. Start this client (listens on port **9001**):
+3. Start this client (listens on port **9001**):
 
    ```bash
    OPENAI_KEY=<your-openai-key> ./gradlew :mcp:mcp-client:webflux:bootRun
    ```
 
-5. Ask a question — the LLM decides which MCP server's tool to call:
+4. Ask a question — the LLM decides which MCP server's tool to call:
 
    ```bash
    curl -G http://localhost:9001/chat --data-urlencode "question=What is the current weather in New York?"
 
    curl -G http://localhost:9001/chat --data-urlencode "question=How much is 100 USD in EUR?"
 
-   curl -G http://localhost:9001/chat --data-urlencode "question=Do we have any iPhones in stock?"
-
-   # one question, two MCP servers: inventory price + currency conversion
-   curl -G http://localhost:9001/chat --data-urlencode "question=How much does the iPhone 16 Pro cost in EUR?"
-
    # Streaming (SSE) variant — tokens arrive as they are generated
-   curl -N -G http://localhost:9001/chat/stream --data-urlencode "question=Which laptops do we carry and what do they cost?"
+   curl -N -G http://localhost:9001/chat/stream --data-urlencode "question=What is the weather in New York and how much is 100 USD in EUR?"
    ```
 
 ## Troubleshooting

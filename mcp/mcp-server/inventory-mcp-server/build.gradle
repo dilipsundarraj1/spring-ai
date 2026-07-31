@@ -9,13 +9,21 @@ version = '0.0.1-SNAPSHOT'
 
 dependencies {
 
+    //spring mvc
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+
+    //mcp server
     implementation 'org.springframework.ai:spring-ai-starter-mcp-server-webmvc'
+
+    //db + jpa
+    runtimeOnly 'com.h2database:h2'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+    //swagger
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3'
 
-    runtimeOnly 'com.h2database:h2'
+
 
     testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
     testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'
