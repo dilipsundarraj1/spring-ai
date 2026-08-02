@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.llm.dto.flight.FlightBooking;
 import com.llm.dto.UserInput;
 import com.llm.utils.CommonUtils;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
+import io.micrometer.observation.annotation.Observed;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,9 +31,12 @@ public class StructuredOutputsController {
 
     private static final Logger log = LoggerFactory.getLogger(StructuredOutputsController.class);
 
+    private final ObservationRegistry observationRegistry;
+
     private final ChatClient chatClient;
 
-    public StructuredOutputsController(ChatClient.Builder chatClientBuilder) {
+    public StructuredOutputsController(ObservationRegistry observationRegistry, ChatClient.Builder chatClientBuilder) {
+        this.observationRegistry = observationRegistry;
         this.chatClient = chatClientBuilder.build();
     }
 
@@ -45,6 +51,20 @@ public class StructuredOutputsController {
     @PostMapping("/v1/structured_outputs")
     public String structuredOutputs(@RequestBody @Valid UserInput userInput) {
 
+        Observation.createNotStarted("structured_outputs", observationRegistry)
+                .observe(() -> {
+                    log.info("userInput message : {} ", userInput);
+                    var message = new UserMessage(userInput.prompt());
+                    var promptMessage = new Prompt(List.of(message));
+
+                    var requestSpec = chatClient.prompt(promptMessage);
+
+                    log.info("requestSpec : {} ", requestSpec);
+                    var responseSpec = requestSpec.call();
+                    log.info("responseSpec : {} ", responseSpec.chatResponse());
+                    return responseSpec.content();
+                });
+
         log.info("userInput message : {} ", userInput);
         var message = new UserMessage(userInput.prompt());
         var promptMessage = new Prompt(List.of(message));
@@ -58,6 +78,7 @@ public class StructuredOutputsController {
     }
 
     @PostMapping("/v1/structured_outputs/fewshot")
+    @Observed(name = "fewshot.count", contextualName = "Structured Outputs Few Shot")
     public String structuredOutputsFewShot(@RequestBody @Valid UserInput userInput) {
 
         log.info("userInput message : {} ", userInput);

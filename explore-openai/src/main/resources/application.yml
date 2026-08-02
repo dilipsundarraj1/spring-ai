@@ -2,6 +2,8 @@ server:
   servlet:
     context-path: /springai
 spring:
+  application:
+    name: explore-openai
   ai:
     openai:
       api-key: ${OPENAI_KEY}
@@ -15,6 +17,25 @@ logging:
     org:
       springframework:
         ai.chat.client.advisor.SimpleLoggerAdvisor: DEBUG
+      com.llm: INFO
+management:
+  otlp:
+    metrics:
+      export:
+        url: http://localhost:4318/v1/metrics
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: http://localhost:4318/v1/traces
+    logging:
+      export:
+        otlp:
+          endpoint: http://localhost:4318/v1/logs
+  tracing:
+    sampling:
+      probability: 1.0
+
 
 weather:
   api-key : 
