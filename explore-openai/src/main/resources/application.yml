@@ -19,6 +19,10 @@ logging:
         ai.chat.client.advisor.SimpleLoggerAdvisor: DEBUG
       com.llm: INFO
 management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,info
   otlp:
     metrics:
       export:

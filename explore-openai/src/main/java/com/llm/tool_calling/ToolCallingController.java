@@ -67,7 +67,7 @@ public class ToolCallingController {
         var requestSpec =  chatClient.prompt()
                 .user(userInput.prompt())
                 .advisors(new SimpleLoggerAdvisor())
-                //.tools(tools)
+                .tools(tools)
                 .toolContext(Map.of("userId", userId));
 
         log.info("requestSpec : {} ", requestSpec);
