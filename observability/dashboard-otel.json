@@ -946,7 +946,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "sum(gen_ai_client_operation_seconds_count)",
+                        "expr": "sum(gen_ai_client_operation_milliseconds_count)",
                         "legendFormat": "Total Requests",
                         "range": true
                       }
@@ -1029,7 +1029,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "rate(gen_ai_client_operation_seconds_sum[5m]) / rate(gen_ai_client_operation_seconds_count[5m]) * 1000",
+                        "expr": "rate(gen_ai_client_operation_milliseconds_sum[5m]) / rate(gen_ai_client_operation_milliseconds_count[5m])",
                         "legendFormat": "Avg Response Time",
                         "range": true
                       }
@@ -1437,7 +1437,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "rate(gen_ai_client_operation_seconds_sum[5m]) / rate(gen_ai_client_operation_seconds_count[5m]) * 1000",
+                        "expr": "rate(gen_ai_client_operation_milliseconds_sum[5m]) / rate(gen_ai_client_operation_milliseconds_count[5m])",
                         "legendFormat": "{{gen_ai_request_model}}",
                         "range": true
                       }
@@ -1529,6 +1529,117 @@
                   }
                 },
                 "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-47": {
+        "kind": "Panel",
+        "spec": {
+          "id": 47,
+          "title": "LLM Response Time by Model (Avg / Max)",
+          "description": "Avg response time per model (P50 proxy) and Max response time per model (P99 proxy). True percentiles unavailable — OTel exports only le=\"+Inf\" histogram bucket.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": { "name": "prometheus" },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "rate(gen_ai_client_operation_milliseconds_sum[5m]) / rate(gen_ai_client_operation_milliseconds_count[5m])",
+                        "legendFormat": "Avg (P50) — {{gen_ai_request_model}}",
+                        "range": true
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": { "name": "prometheus" },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "max_over_time((rate(gen_ai_client_operation_milliseconds_sum[2m]) / rate(gen_ai_client_operation_milliseconds_count[2m]))[5m:1m])",
+                        "legendFormat": "Max (P99 proxy) — {{gen_ai_request_model}}",
+                        "range": true
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.1.1",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": ["mean", "max", "lastNotNull"],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": { "hideZeros": false, "mode": "multi", "sort": "desc" }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "ms",
+                  "color": { "mode": "palette-classic" },
+                  "custom": {
+                    "axisBorderShow": true,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "series",
+                    "axisLabel": "ms",
+                    "axisPlacement": "left",
+                    "barAlignment": 0,
+                    "barWidthFactor": 0.6,
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "gradientMode": "none",
+                    "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+                    "insertNulls": false,
+                    "lineInterpolation": "smooth",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": { "type": "linear" },
+                    "showPoints": "never",
+                    "showValues": false,
+                    "spanNulls": false,
+                    "stacking": { "group": "A", "mode": "none" },
+                    "thresholdsStyle": { "mode": "off" }
+                  },
+                  "thresholds": { "mode": "absolute", "steps": [{ "value": 0, "color": "green" }] }
+                },
+                "overrides": [
+                  {
+                    "matcher": { "id": "byRegexp", "options": "/Max.*/" },
+                    "properties": [
+                      { "id": "custom.lineStyle", "value": { "dash": [10, 10], "fill": "dash" } },
+                      { "id": "custom.lineWidth", "value": 1 }
+                    ]
+                  }
+                ]
               }
             }
           }
@@ -1824,6 +1935,16 @@
                         "element": {
                           "kind": "ElementReference",
                           "name": "panel-46"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "AutoGridLayoutItem",
+                      "spec": {
+                        "columnSpan": 3,
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-47"
                         }
                       }
                     }
