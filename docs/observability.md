@@ -1,4 +1,33 @@
-# Observability with Spring Boot & OpenTelemetry
+<!-- TOC -->
+  * [Why Observability?](#why-observability)
+  * [OpenTelemetry — The Open Standard](#opentelemetry--the-open-standard)
+  * [Spring Boot — Best of Both Worlds](#spring-boot--best-of-both-worlds)
+  * [Architecture: App → otel-lgtm](#architecture-app--otel-lgtm)
+    * [Component Reference](#component-reference)
+  * [What You Get for Free](#what-you-get-for-free)
+    * [Traces](#traces)
+    * [Metrics](#metrics)
+    * [Logs](#logs)
+  * [OTel Setup](#otel-setup)
+    * [Infrastructure (`compose-observability.yaml`)](#infrastructure-compose-observabilityyaml)
+    * [Dependency (`build.gradle`)](#dependency-buildgradle)
+    * [Configuration (`application.yml`)](#configuration-applicationyml)
+  * [Understanding TraceId and SpanId](#understanding-traceid-and-spanid)
+    * [TraceId](#traceid)
+    * [SpanId](#spanid)
+    * [How They Fit Together](#how-they-fit-together)
+    * [Why It Matters for Logs](#why-it-matters-for-logs)
+    * [Logs](#logs-1)
+  * [Grafana Dashboard](#grafana-dashboard)
+    * [Why import instead of building panel by panel?](#why-import-instead-of-building-panel-by-panel)
+    * [Import `dashboard-otel.json` (recommended)](#import-dashboard-oteljson-recommended)
+    * [Build it yourself with an AI assistant](#build-it-yourself-with-an-ai-assistant)
+  * [Custom Instrumentation](#custom-instrumentation)
+    * [Traces](#traces-1)
+    * [Metrics](#metrics-1)
+    * [Logs](#logs-2)
+  * [Summary](#summary)
+<!-- TOC -->
 
 ## Why Observability?
 
@@ -16,12 +45,20 @@ Without it you are flying blind in production: you cannot tell whether a slow re
 
 OpenTelemetry (OTel) is a vendor-neutral, CNCF-graduated project that defines a single API and wire format for all three signals.
 
-```
-Your App
-  │
-  ├── Traces  ─────┐
-  ├── Metrics ─────┤──► OTLP (OpenTelemetry Protocol) ──► any backend
-  └── Logs    ─────┘
+```mermaid
+flowchart LR
+    App["Your App"]
+
+    App -->|Traces| OTLP
+    App -->|Metrics| OTLP
+    App -->|Logs| OTLP
+
+    OTLP["OTLP\nOpenTelemetry Protocol"]
+
+    OTLP --> B1["Datadog"]
+    OTLP --> B2["Grafana"]
+    OTLP --> B3["Jaeger"]
+    OTLP --> B4["any backend ..."]
 ```
 
 Before OTel, every backend (Datadog, Jaeger, Prometheus …) had its own SDK and agent. OTel decouples *instrumentation* from *backend choice*: instrument once, ship anywhere.
@@ -102,27 +139,7 @@ flowchart LR
 | **Loki** | Log aggregation — stores structured log records with trace correlation |
 | **Grafana UI** | Single pane of glass — query and visualise all three signals on port 3000 |
 
-### Configuration (`application.yml`)
 
-```yaml
-management:
-  otlp:
-    metrics:
-      export:
-        url: http://localhost:4318/v1/metrics
-  opentelemetry:
-    tracing:
-      export:
-        otlp:
-          endpoint: http://localhost:4318/v1/traces
-    logging:
-      export:
-        otlp:
-          endpoint: http://localhost:4318/v1/logs
-  tracing:
-    sampling:
-      probability: 1.0   # capture every request (tune down in production)
-```
 
 ---
 
@@ -166,30 +183,69 @@ Everything below requires **zero custom code** — just the starters and the `ap
 
 ---
 
+## OTel Setup
+
+Everything in this document flows from a single starter, a compose file for the backend infrastructure, and a few config properties.
+
+### Infrastructure (`compose-observability.yaml`)
+
+The `grafana/otel-lgtm` image bundles the entire observability backend — OTel Collector, Mimir, Tempo, Loki, and Grafana — into a single container. No separate services to wire together.
+
+```yaml
+services:
+  grafana-lgtm:
+    image: 'grafana/otel-lgtm:latest'
+    ports:
+      - '3000:3000'   # Grafana UI
+      - '4317:4317'   # OTLP gRPC receiver
+      - '4318:4318'   # OTLP HTTP receiver
+```
+
+**Start the infrastructure:**
+
+```bash
+docker compose -f compose-observability.yaml up
+```
+
+Grafana will be available at [http://localhost:3000](http://localhost:3000) once the container is healthy. The app pushes all signals to `localhost:4318` over OTLP/HTTP.
+
+### Dependency (`build.gradle`)
+
+```groovy
+// OTel — brings in the SDK, OTLP exporters, and Micrometer bridge
+implementation 'org.springframework.boot:spring-boot-starter-opentelemetry'
+```
+
+That one starter wires up:
+- The OpenTelemetry SDK and OTLP exporters for traces, metrics, and logs
+- A Micrometer `ObservationRegistry` bridge so every `@Observed` span and counter flows through OTel automatically
+- Auto-instrumented HTTP server spans for every incoming request
+
+### Configuration (`application.yml`)
+
+```yaml
+management:
+  otlp:
+    metrics:
+      export:
+        url: http://localhost:4318/v1/metrics
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: http://localhost:4318/v1/traces
+    logging:
+      export:
+        otlp:
+          endpoint: http://localhost:4318/v1/logs
+  tracing:
+    sampling:
+      probability: 1.0   # capture every request (tune down in production)
+```
+
 ## Understanding TraceId and SpanId
 
 These two IDs are the backbone of distributed tracing. Once you grasp them, everything in Grafana Tempo clicks into place.
-
-### The Analogy
-
-Think of it like an **Amazon package delivery**:
-
-- You place one order and get one **order number** — that is the `traceId`
-- Behind the scenes, the order goes through multiple stages — payment processed, warehouse pick, packed, dispatched to courier, out for delivery, delivered — each stage is a **span**
-- Every span has a **start time, an end time, and a status**
-- You can track the entire journey with that one order number (`traceId`)
-- You can drill into any individual stage (`spanId`) to see exactly what happened and how long it took
-
-```
-TraceId: a1b2c3d4e5f6...  (same across all spans below)
-
-├── SpanId: 11aa  [Payment Processed]       0ms  → 120ms  ✅
-├── SpanId: 22bb  [Warehouse Pick]          120ms → 800ms  ✅
-├── SpanId: 33cc  [Packed]                  800ms → 1.2s   ✅
-├── SpanId: 44dd  [Dispatched to Courier]   1.2s  → 2.1s   ✅
-├── SpanId: 55ee  [Out for Delivery]        2.1s  → 8.4s   ✅
-└── SpanId: 66ff  [Delivered]               8.4s  → 8.5s   ✅
-```
 
 ### TraceId
 
@@ -239,6 +295,155 @@ INFO  c.l.StructuredOutputsController - userInput message : ...
 ```
 
 In Grafana you can click the `traceId` in a Loki log line and jump straight to the matching trace in Tempo — no manual searching.
+
+---
+
+
+### Logs
+
+Logs are correlated with traces via the OTel Logback appender — the active `traceId` and `spanId` are injected into every log record automatically.
+
+**`logback-spring.xml`** — routes all logs through the OTel appender:
+
+```xml
+<appender name="OTEL"
+    class="io.opentelemetry.instrumentation.logback.appender.v1_0.OpenTelemetryAppender"/>
+
+<root level="INFO">
+    <appender-ref ref="CONSOLE"/>
+    <appender-ref ref="OTEL"/>     <!-- ships logs to Loki via OTLP -->
+</root>
+```
+
+**`InstallOpenTelemetryAppender.java`** — wires the Spring-managed `OpenTelemetry` SDK instance into the Logback appender at startup:
+
+```java
+@Component
+class InstallOpenTelemetryAppender implements InitializingBean {
+
+    private final OpenTelemetry openTelemetry;
+
+    InstallOpenTelemetryAppender(OpenTelemetry openTelemetry) {
+        this.openTelemetry = openTelemetry;
+    }
+
+    @Override
+    public void afterPropertiesSet() {
+        OpenTelemetryAppender.install(this.openTelemetry);
+    }
+}
+```
+
+This step is necessary because Logback initialises before the Spring context — the appender exists but has no SDK reference until `afterPropertiesSet` runs.
+
+
+## Grafana Dashboard
+
+### Why import instead of building panel by panel?
+
+Grafana lets you build panels manually — pick a visualization, write a PromQL query, tweak axes — but starting from scratch for every metric is slow and error-prone. You have to know the exact metric names, understand the label set, and figure out the right query shape before you see anything useful.
+
+A better approach: **use an AI assistant to generate the full dashboard JSON from your metric names**. In this project, `dashboard-otel.json` was built that way. Instead of spending an hour clicking through the UI, you describe what you want ("show P50 and max LLM response time by model, token usage over time, request rate per endpoint") and the assistant produces a valid Grafana v2 dashboard JSON in seconds. You paste it in, verify the queries against your live Prometheus data, and iterate from there.
+
+The result is a dashboard that covers:
+- **Spring AI Metrics row** — total requests, avg response time, prompt/completion tokens, LLM latency by model
+- **API Metrics row** — HTTP request rate, error rate, duration per endpoint
+- **Application Logs row** — correlated Loki logs, filterable by service
+
+This is dramatically faster than the manual route and teaches you something more valuable than clicking: how to reason about metrics, labels, and query shapes — which is the transferable skill.
+
+---
+
+### Import `dashboard-otel.json` (recommended)
+
+`dashboard-otel.json` is a pre-built dashboard tuned for the OTel metric names this stack exports (`gen_ai_client_operation_milliseconds_*`, `http_server_requests_milliseconds_*`, `service_name` labels).
+
+**Steps:**
+1. Open Grafana at [http://localhost:3000](http://localhost:3000)
+2. Go to **Dashboards → Import**
+3. Click **Upload dashboard JSON file**
+4. Select `observability/dashboard-otel.json` from this repo
+5. Click **Import**
+
+---
+
+### Build it yourself with an AI assistant
+
+Instead of importing the finished file, build the same dashboard from scratch using an AI assistant (Claude, ChatGPT, Copilot — any will do):
+
+- **Any assistant works** — the prompt is the same regardless of which one you use
+- **Forces you to think** — you have to decide what you want to visualise and why, rather than inheriting someone else's decisions
+- **You learn the metric names** — by describing what you want, you naturally discover the exact metric names and label keys your stack exports
+- **You learn the query shapes** — `rate()`, `sum by()`, `histogram_quantile()` — you understand why each one is used, not just that it works
+- **Faster than the UI** — generating a full dashboard JSON from a prompt takes seconds; building the same thing panel-by-panel in Grafana takes an hour
+
+> **Important — LLM responses are non-deterministic.**
+> The same prompt can produce different JSON on different runs. The assistant may generate a panel with a slightly wrong query, a missing label, or a field name that your Grafana version does not support. **Always verify each panel against your live Prometheus data in Grafana Explore before treating it as correct.** The prompt below is a starting point, not a guarantee.
+
+**Prompt to use:**
+
+```
+I am building a Grafana dashboard for a Spring Boot 4 + Spring AI 2.0 application.
+The app uses the OpenTelemetry SDK and pushes metrics to grafana/otel-lgtm via OTLP/HTTP.
+Grafana version is 13.x and uses the v2 dashboard schema (apiVersion: dashboard.grafana.app/v2).
+
+The following metrics are available in Prometheus:
+
+HTTP server metrics:
+  - http_server_requests_milliseconds_count{uri, method, status}
+  - http_server_requests_milliseconds_sum{uri, method, status}
+  - http_server_requests_max_milliseconds{uri}
+
+Spring AI / LLM metrics:
+  - gen_ai_client_operation_milliseconds_count{gen_ai_request_model, gen_ai_system, error}
+  - gen_ai_client_operation_milliseconds_sum{gen_ai_request_model, gen_ai_system, error}
+  - gen_ai_client_token_usage_total{gen_ai_token_type, gen_ai_request_model}
+
+All metrics use the label service_name (not application) to identify the app.
+
+Please generate a Grafana v2 dashboard JSON with two rows:
+
+Row 1 — Spring AI Metrics:
+  - Total AI Requests (stat): sum of gen_ai_client_operation_milliseconds_count
+  - Avg Response Time (gauge, ms): rate(sum[5m]) / rate(count[5m])
+  - Prompt Tokens (stat): gen_ai_client_token_usage_total{gen_ai_token_type="input"}
+  - Completion Tokens (stat): gen_ai_client_token_usage_total{gen_ai_token_type="output"}
+  - Token Usage Over Time (timeseries): prompt vs completion tokens
+  - LLM Response Time by Model (timeseries): avg and max response time per gen_ai_request_model
+
+Row 2 — API Metrics:
+  - Request Rate (timeseries): rate of http_server_requests_milliseconds_count by uri
+  - Avg Request Duration (timeseries): sum/count ratio by uri in ms
+  - Max Request Duration (timeseries): http_server_requests_max_milliseconds by uri
+  - Error Rate (timeseries): requests where status starts with 4 or 5
+
+Use RowsLayout at the top level. Use AutoGridLayout inside the Spring AI row
+and GridLayout inside the API row.
+Do not use byNamePattern in field overrides — use byRegexp instead.
+```
+
+**After generating, verify each panel:**
+- Open Grafana → Explore → Prometheus
+- Run the panel's PromQL query manually
+- Confirm you see data before saving the dashboard
+
+**This is an iterative process — expect multiple rounds.**
+
+The assistant rarely gets everything right in one shot. A typical session looks like this:
+
+```
+You:       Generate the dashboard JSON
+Assistant: Produces JSON with 6 panels
+You:       Import it → 2 panels show No Data
+You:       Run the queries in Explore → wrong metric name on one, missing label on another
+You:       Tell the assistant what you found → it corrects both
+You:       Re-import → panels show data, but P99 panel has no Y axis
+You:       Share the screenshot → assistant fixes the axis config
+...and so on
+```
+
+Each round you understand the data model a little better. By the time the dashboard is working, you know exactly what every query does and why — which is the goal. The finished `dashboard-otel.json` in this repo went through exactly this process.
+
 
 ---
 
@@ -326,30 +531,6 @@ class InstallOpenTelemetryAppender implements InitializingBean {
 ```
 
 This step is necessary because Logback initialises before the Spring context — the appender exists but has no SDK reference until `afterPropertiesSet` runs.
-
----
-
-## Grafana Dashboard
-
-This setup uses the **Spring Boot Observability** dashboard (ID `17175`), published by the Spring team and built specifically for the Loki + Tempo + Prometheus/Mimir stack.
-
-**To import:**
-1. Open Grafana at `http://localhost:3000`
-2. Go to **Dashboards → Import**
-3. Enter ID `17175` and click **Load**
-4. Map the data sources to Prometheus, Loki, and Tempo
-5. Click **Import**
-
-**What it gives you out of the box:**
-
-| Panel | Signal | Description |
-|---|---|---|
-| Request Rate | Metrics | Requests per second per endpoint |
-| Error Rate | Metrics | 4xx / 5xx breakdown |
-| Request Duration | Metrics | P50 / P95 / P99 latency per endpoint |
-| JVM Memory | Metrics | Heap and non-heap usage over time |
-| Traces | Traces | Drill into individual request traces in Tempo |
-| Logs | Logs | Correlated log lines from Loki, filtered by `traceId` |
 
 ---
 
