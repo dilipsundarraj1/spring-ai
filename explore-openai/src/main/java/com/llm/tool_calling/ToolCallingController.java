@@ -36,19 +36,24 @@ public class ToolCallingController {
     private final OpenAiChatModel openAiChatModel;
     private final MeterRegistry meterRegistry;
     private final ObservationRegistry observationRegistry;
+    //private final WeatherToolsFunctionV2 weatherToolsFunctionV2;
 
     public ToolCallingController(ChatClient.Builder builder,
                                  WeatherConfigProperties weatherConfigProperties,
                                  OpenAiChatModel openAiChatModel,
                                  CurrencyTools currencyTools,
                                  MeterRegistry meterRegistry,
-                                 ObservationRegistry observationRegistry) {
+                                 ObservationRegistry observationRegistry
+            //                            , WeatherToolsFunctionV2 weatherToolsFunctionV2
+    ) {
         this.meterRegistry = meterRegistry;
         this.observationRegistry = observationRegistry;
+      //  this.weatherToolsFunctionV2 = weatherToolsFunctionV2;
 
         ToolCallback toolCallback = FunctionToolCallback
                 //.builder("currentWeather", new WeatherToolsFunction(weatherConfigProperties, meterRegistry))
                 .builder("currentWeather", new WeatherToolsFunctionV2(weatherConfigProperties, observationRegistry))
+               // .builder("currentWeather", weatherToolsFunctionV2)
                 .description("Get the weather in location")
                 .inputType(WeatherRequest.class)
                 .build();

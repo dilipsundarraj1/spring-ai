@@ -18,7 +18,7 @@ dependencies {
 
     //otel
     implementation 'org.springframework.boot:spring-boot-starter-opentelemetry'
-    //otel-metrics
+    //observation
     implementation 'org.springframework.boot:spring-boot-starter-aop:4.0.0-M2'
     //otel-logs
     implementation 'io.opentelemetry.instrumentation:opentelemetry-logback-appender-1.0:2.21.0-alpha'

@@ -34,8 +34,8 @@
     - [Why Observation API?](#why-observation-api)
     - [How it works](#how-it-works)
     - [WeatherToolsFunctionV2 — Observation API in practice](#weathertoolsfunctionv2--observation-api-in-practice)
+    - [Approach 2 — `@Observed` Annotation](#approach-2--observed-annotation)
     - [MeterRegistry vs Observation API — when to use which](#meterregistry-vs-observation-api--when-to-use-which)
-  - [Traces](#traces-1)
 - [Summary](#summary)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -316,13 +316,8 @@ These two IDs are the backbone of distributed tracing. Once you grasp them, ever
 
 ### How They Fit Together
 
-```
-TraceId: a1b2c3d4e5f6...  (same across all rows below)
 
-├── SpanId: 11aa  [HTTP GET /springai/v1/structured_outputs]  0ms → 340ms
-│   ├── SpanId: 22bb  [Spring AI ChatClient call]             5ms → 330ms
-│   │   └── SpanId: 33cc  [structured_outputs observation]   5ms → 330ms
-```
+![](../observability/images/default-trace.png)
 
 Here is a real log line from this application. Notice the `traceId` and `spanId` embedded directly in the output:
 
@@ -598,7 +593,9 @@ sum by(tool)(rate(tool_invocations_total[5m]))
 
 #### Why Observation API?
 
-`MeterRegistry` is great for counters and gauges, but it only gives you **metrics**. Every real operation also has a duration, can fail, and is part of a trace. The Observation API handles all three signals in one place:
+- `MeterRegistry` is great for counters and gauges, but it only gives you **metrics**. 
+- Every real operation also has a duration, can fail, and is part of a trace. 
+- The Observation API handles all three signals in one place:
 
 | Concern | MeterRegistry | Observation API |
 |---|---|---|
@@ -612,7 +609,8 @@ Use `MeterRegistry` when you need a **simple counter or gauge**. Use the Observa
 
 #### How it works
 
-`ObservationRegistry` is the entry point. You create an `Observation`, start it, run your code inside it, and stop it. The OTel bridge on the classpath automatically turns it into both a **span** (in Tempo) and a **timer metric** (in Grafana) — no extra configuration needed.
+- `ObservationRegistry` is the entry point. 
+- You create an `Observation`, start it, run your code inside it, and stop it. 
 
 ```java
 Observation observation = Observation.createNotStarted("tool.execution", observationRegistry)
@@ -628,6 +626,8 @@ try (Observation.Scope scope = observation.openScope()) {
     observation.stop();     // ends the span and records the timer
 }
 ```
+
+- The OTel bridge on the classpath automatically turns it into both a **span** (in Tempo) and a **timer metric** (in Grafana) — no extra configuration needed.
 
 Key methods:
 
@@ -682,59 +682,67 @@ public class WeatherToolsFunctionV2 implements Function<WeatherRequest, WeatherR
 }
 ```
 
+This is **Approach 1 — Programmatic API**. You control exactly when the observation starts, which tags are added (including dynamic ones like `city`), and when errors are recorded.
+
 What you get for free — without any extra configuration:
 
 | Signal | What appears |
 |---|---|
 | **Trace span** | `tool.execution` span linked to the parent HTTP request span in Tempo |
-| **Timer metric** | `weather_lookup_seconds_count` + `weather_lookup_seconds_sum` in Grafana |
-| **Error tag** | `error=true` on the span and metric when an exception is thrown |
+| **Timer metric** | `tool_execution_milliseconds_count` + `tool_execution_milliseconds_sum` in Grafana |
+| **Error tag** | `error=BadRequest` on the span and metric when an exception is thrown |
 | **Tags** | `tool=weather`, `city=<value>` as span attributes and metric labels |
 
-#### MeterRegistry vs Observation API — when to use which
-
-```
-Simple counter / gauge
-  → use MeterRegistry directly
-
-Operation with duration, tracing, and error tracking
-  → use Observation API
-
-Both
-  → use Observation API (it subsumes counters and timers automatically)
-```
-
 ---
 
-### Traces
+#### Approach 2 — `@Observed` Annotation
 
-Spring Boot auto-creates spans for every incoming HTTP request. Spring AI adds spans around each LLM call automatically. For custom business spans, use `Observation` directly:
+`@Observed` requires the AOP starter to be on the classpath:
 
-**Programmatic span — `StructuredOutputsController.java`**
-
-```java
-// Creates a span named "structured_outputs" wrapping the LLM call
-Observation.createNotStarted("structured_outputs", observationRegistry)
-        .observe(() -> {
-            log.info("userInput message : {} ", userInput);
-            var responseSpec = chatClient.prompt(promptMessage).call();
-            return responseSpec.content();
-        });
+```groovy
+//observation
+implementation 'org.springframework.boot:spring-boot-starter-aop:4.0.0-M2'
 ```
 
-`Observation` is the Micrometer abstraction. When the OTel bridge is on the classpath it automatically produces an OTel span — no OTel API imports required.
-
-**Declarative span — `@Observed`**
+The same result with zero boilerplate. Add the annotation to the method and Spring AOP does the rest:
 
 ```java
-@PostMapping("/v1/structured_outputs/fewshot")
-@Observed(name = "fewshot.count", contextualName = "Structured Outputs Few Shot")
-public String structuredOutputsFewShot(@RequestBody @Valid UserInput userInput) { ... }
+@Component  // must be a Spring bean for AOP to proxy it
+public class WeatherToolsFunctionV2 implements Function<WeatherRequest, WeatherResponse> {
+
+    @Observed(
+        name = "tool.execution",
+        contextualName = "Weather Tool",
+        lowCardinalityKeyValues = {"tool", "weather"}
+    )
+    @Override
+    public WeatherResponse apply(WeatherRequest weatherRequest) {
+        return restClient
+                .get()
+                .uri("/current.json?key={key}&q={q}",
+                        weatherProps.apiKey(), weatherRequest.city())
+                .retrieve()
+                .body(WeatherResponse.class);
+    }
+}
 ```
 
-`@Observed` wraps the entire method in a span. Requires the AOP starter (`spring-boot-starter-aop`) to be on the classpath.
+`@Observed` automatically starts the observation before the method, records an error if the method throws, and stops the observation when it returns — no try/catch/finally needed.
 
----
+**Approach 1 vs Approach 2 — side by side**
+
+| | Programmatic (`Observation` API) | Declarative (`@Observed`) |
+|---|---|---|
+| **Setup** | Inject `ObservationRegistry`, manual start/stop | Annotation only — AOP handles lifecycle |
+| **Dynamic tags** | ✅ Add per-request (e.g. `city=London`) | ❌ Static values only at annotation level |
+| **Error recording** | Manual `observation.error(e)` in catch | ✅ Automatic on any thrown exception |
+| **Works with `new`** | ✅ No Spring proxy needed | ❌ Must be a Spring `@Component` bean |
+| **Boilerplate** | Medium — try/scope/finally | Minimal — one annotation |
+| **Best for** | Tools instantiated with `new`, dynamic tags | Service beans with uniform instrumentation |
+
+> **Why `WeatherToolsFunctionV2` uses Approach 1:** The tool is created with `new WeatherToolsFunctionV2(...)` in the controller, so Spring AOP cannot proxy it. `@Observed` would be silently ignored. The programmatic API works regardless of how the object is created.
+
+
 
 ## Summary
 
