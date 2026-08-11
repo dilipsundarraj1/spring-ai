@@ -42,9 +42,9 @@ management:
 
 
 weather:
-  api-key : 
+  api-key : ${WEATHER_API_KEY}
   api-url : http://api.weatherapi.com/v1
 
 currency-exchange:
-  api-key :
+  api-key : ${CURRENCY_EXCHANGE_API_KEY}
   base-url: https://openexchangerates.org/api

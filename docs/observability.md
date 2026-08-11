@@ -1,33 +1,46 @@
-<!-- TOC -->
-  * [Why Observability?](#why-observability)
-  * [OpenTelemetry — The Open Standard](#opentelemetry--the-open-standard)
-  * [Spring Boot — Best of Both Worlds](#spring-boot--best-of-both-worlds)
-  * [Architecture: App → otel-lgtm](#architecture-app--otel-lgtm)
-    * [Component Reference](#component-reference)
-  * [What You Get for Free](#what-you-get-for-free)
-    * [Traces](#traces)
-    * [Metrics](#metrics)
-    * [Logs](#logs)
-  * [OTel Setup](#otel-setup)
-    * [Infrastructure (`compose-observability.yaml`)](#infrastructure-compose-observabilityyaml)
-    * [Dependency (`build.gradle`)](#dependency-buildgradle)
-    * [Configuration (`application.yml`)](#configuration-applicationyml)
-  * [Understanding TraceId and SpanId](#understanding-traceid-and-spanid)
-    * [TraceId](#traceid)
-    * [SpanId](#spanid)
-    * [How They Fit Together](#how-they-fit-together)
-    * [Why It Matters for Logs](#why-it-matters-for-logs)
-    * [Logs](#logs-1)
-  * [Grafana Dashboard](#grafana-dashboard)
-    * [Why import instead of building panel by panel?](#why-import-instead-of-building-panel-by-panel)
-    * [Import `dashboard-otel.json` (recommended)](#import-dashboard-oteljson-recommended)
-    * [Build it yourself with an AI assistant](#build-it-yourself-with-an-ai-assistant)
-  * [Custom Instrumentation](#custom-instrumentation)
-    * [Traces](#traces-1)
-    * [Metrics](#metrics-1)
-    * [Logs](#logs-2)
-  * [Summary](#summary)
-<!-- TOC -->
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+
+- [Why Observability?](#why-observability)
+- [OpenTelemetry — The Open Standard](#opentelemetry--the-open-standard)
+- [Spring Boot — Best of Both Worlds](#spring-boot--best-of-both-worlds)
+- [Architecture: App → otel-lgtm](#architecture-app-%E2%86%92-otel-lgtm)
+  - [Component Reference](#component-reference)
+- [What You Get for Free](#what-you-get-for-free)
+  - [Traces](#traces)
+  - [Metrics](#metrics)
+  - [Logs](#logs)
+- [OTel Setup](#otel-setup)
+  - [Infrastructure (`compose-observability.yaml`)](#infrastructure-compose-observabilityyaml)
+  - [Dependency (`build.gradle`)](#dependency-buildgradle)
+  - [Configuration (`application.yml`)](#configuration-applicationyml)
+  - [Logs](#logs-1)
+- [Understanding TraceId and SpanId](#understanding-traceid-and-spanid)
+  - [TraceId](#traceid)
+  - [SpanId](#spanid)
+  - [How They Fit Together](#how-they-fit-together)
+  - [Why It Matters for Logs](#why-it-matters-for-logs)
+- [Grafana Dashboard](#grafana-dashboard)
+  - [Why import instead of building panel by panel?](#why-import-instead-of-building-panel-by-panel)
+  - [Import `dashboard-otel.json` (recommended)](#import-dashboard-oteljson-recommended)
+  - [Build it yourself with an AI assistant](#build-it-yourself-with-an-ai-assistant)
+- [Custom Instrumentation](#custom-instrumentation)
+  - [Custom Metrics](#custom-metrics)
+      - [What is MeterRegistry?](#what-is-meterregistry)
+      - [How does registering a metric publish it automatically?](#how-does-registering-a-metric-publish-it-automatically)
+      - [How are OTel and MeterRegistry connected?](#how-are-otel-and-meterregistry-connected)
+      - [Adding tool invocation counters](#adding-tool-invocation-counters)
+  - [Observation API](#observation-api)
+    - [Why Observation API?](#why-observation-api)
+    - [How it works](#how-it-works)
+    - [WeatherToolsFunctionV2 — Observation API in practice](#weathertoolsfunctionv2--observation-api-in-practice)
+    - [MeterRegistry vs Observation API — when to use which](#meterregistry-vs-observation-api--when-to-use-which)
+  - [Traces](#traces-1)
+- [Summary](#summary)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+
 
 ## Why Observability?
 
@@ -157,16 +170,19 @@ Everything below requires **zero custom code** — just the starters and the `ap
 
 ### Metrics
 
+Micrometer automatically exports JVM, HTTP server, and Spring AI token-usage metrics. The `@Observed` annotation and `Observation` API also produce a timer metric (count + duration histogram) alongside the trace span — one API, two signals.
+
+**Auto-exported metrics include:**
+
 | Metric | Description |
 |---|---|
-| `http.server.request.duration` | Latency histogram per endpoint and status code |
-| `jvm.memory.used` | Heap and non-heap per memory pool |
-| `jvm.gc.duration` | GC pause time |
-| `jvm.threads.active` | Live thread count |
-| `gen_ai.client.token.usage` | Prompt + completion token counts per LLM call |
-| `gen_ai.client.operation.duration` | End-to-end LLM call latency |
-| `system.cpu.usage` | Process and system CPU utilisation |
+| `http.server.requests` | Request count, latency per endpoint |
+| `jvm.memory.used` | Heap and non-heap usage |
+| `gen_ai.client.token.usage` | Prompt and completion token counts per LLM call |
+| `fewshot.count` | Custom timer from `@Observed` |
+| `structured_outputs` | Custom timer from `Observation.createNotStarted` |
 
+---
 ### Logs
 
 | What | Detail |
@@ -243,6 +259,45 @@ management:
       probability: 1.0   # capture every request (tune down in production)
 ```
 
+### Logs
+
+Traces and metrics are shipped automatically, but logs need two extra files because Logback initialises before the Spring context — the OTel appender exists at startup but has no SDK reference yet.
+
+**`logback-spring.xml`** — adds the OTel appender alongside the console:
+
+```xml
+<appender name="OTEL"
+    class="io.opentelemetry.instrumentation.logback.appender.v1_0.OpenTelemetryAppender"/>
+
+<root level="INFO">
+    <appender-ref ref="CONSOLE"/>
+    <appender-ref ref="OTEL"/>     <!-- ships logs to Loki via OTLP -->
+</root>
+```
+
+**`InstallOpenTelemetryAppender.java`** — wires the Spring-managed `OpenTelemetry` bean into the appender once the context is ready:
+
+```java
+@Component
+class InstallOpenTelemetryAppender implements InitializingBean {
+
+    private final OpenTelemetry openTelemetry;
+
+    InstallOpenTelemetryAppender(OpenTelemetry openTelemetry) {
+        this.openTelemetry = openTelemetry;
+    }
+
+    @Override
+    public void afterPropertiesSet() {
+        OpenTelemetryAppender.install(this.openTelemetry);
+    }
+}
+```
+
+Without these two files, logs are written to the console only and never reach Loki.
+
+---
+
 ## Understanding TraceId and SpanId
 
 These two IDs are the backbone of distributed tracing. Once you grasp them, everything in Grafana Tempo clicks into place.
@@ -297,45 +352,6 @@ INFO  c.l.StructuredOutputsController - userInput message : ...
 In Grafana you can click the `traceId` in a Loki log line and jump straight to the matching trace in Tempo — no manual searching.
 
 ---
-
-
-### Logs
-
-Logs are correlated with traces via the OTel Logback appender — the active `traceId` and `spanId` are injected into every log record automatically.
-
-**`logback-spring.xml`** — routes all logs through the OTel appender:
-
-```xml
-<appender name="OTEL"
-    class="io.opentelemetry.instrumentation.logback.appender.v1_0.OpenTelemetryAppender"/>
-
-<root level="INFO">
-    <appender-ref ref="CONSOLE"/>
-    <appender-ref ref="OTEL"/>     <!-- ships logs to Loki via OTLP -->
-</root>
-```
-
-**`InstallOpenTelemetryAppender.java`** — wires the Spring-managed `OpenTelemetry` SDK instance into the Logback appender at startup:
-
-```java
-@Component
-class InstallOpenTelemetryAppender implements InitializingBean {
-
-    private final OpenTelemetry openTelemetry;
-
-    InstallOpenTelemetryAppender(OpenTelemetry openTelemetry) {
-        this.openTelemetry = openTelemetry;
-    }
-
-    @Override
-    public void afterPropertiesSet() {
-        OpenTelemetryAppender.install(this.openTelemetry);
-    }
-}
-```
-
-This step is necessary because Logback initialises before the Spring context — the appender exists but has no SDK reference until `afterPropertiesSet` runs.
-
 
 ## Grafana Dashboard
 
@@ -449,6 +465,247 @@ Each round you understand the data model a little better. By the time the dashbo
 
 ## Custom Instrumentation
 
+### Custom Metrics
+
+Spring Boot ships metrics for HTTP requests, JVM memory, and thread pools out of the box. But these tell you nothing about what your application is *actually doing*. 
+
+When a tool is called 500 times and fails 200 of those, the default metrics won't surface it — you just see an HTTP 200.
+
+Custom metrics let you instrument the parts of your code that matter to your users:
+
+- **Which tools are being invoked, and how often?** — so you know where load concentrates
+- **Are tools failing silently?** — Spring AI converts tool exceptions to LLM responses, so no HTTP error is produced; without a custom error counter you'd never know
+- **Which tool is the bottleneck?** — invocation rate per tool reveals which one to optimize first
+
+These questions cannot be answered by auto-instrumentation alone. Custom counters fill that gap with minimal code.
+
+##### What is MeterRegistry?
+
+`MeterRegistry` is the Micrometer interface for managing all metrics in your application:
+
+- **Central registry** — every counter, timer, or gauge you create is registered here
+- **Live ledger** — values are tracked in memory and exported automatically on each scrape/push interval
+- **Backend-agnostic** — Micrometer publishes to whichever backend is configured (Prometheus, OTel, Datadog, …)
+- **Spring-managed** — you never instantiate it yourself; Spring Boot auto-creates it as a bean and you just inject it:
+
+
+```java
+public WeatherToolsFunction(WeatherConfigProperties props, MeterRegistry meterRegistry) {
+    // store it, use it to register metrics
+}
+```
+
+##### How does registering a metric publish it automatically?
+
+The moment you call `.register(meterRegistry)`, the metric is live. From that point on:
+
+```java
+Counter counter = Counter.builder("tool.invocations")
+        .tag("tool", "weather")
+        .register(meterRegistry);  // ← metric is live from this line
+
+counter.increment();  // ← value goes up; next export picks it up automatically
+```
+
+- Micrometer tracks the current value internally
+- No polling, no manual flushing — you just call `increment()` and Micrometer handles the rest
+- On every scrape or push interval, it reads the current value and exports it
+
+##### How are OTel and MeterRegistry connected?
+
+`spring-boot-starter-opentelemetry` installs a **Micrometer OTel bridge** automatically. This bridge sits between `MeterRegistry` and the OTel SDK:
+
+```mermaid
+flowchart LR
+    A["Your Code<br/><code>counter.increment()</code>"]
+    B["MeterRegistry<br/><em>Micrometer</em>"]
+    C["OTel Bridge<br/><em>spring-boot-starter-opentelemetry</em>"]
+    D["OTel SDK"]
+    E["OTLP/HTTP"]
+    F["otel-lgtm"]
+    G["Grafana"]
+
+    A --> B --> C --> D --> E --> F --> G
+```
+
+You write standard Micrometer code (`Counter`, `Timer`, `Gauge`) — OTel is never imported directly. The bridge translates Micrometer's metric model into OTel's format and the OTLP exporter ships it to the collector.
+
+One naming side effect: Micrometer uses dots (`tool.invocations`) but Prometheus uses underscores, so the metric arrives in Grafana as `tool_invocations_total`.
+
+##### Adding tool invocation counters
+
+Each tool registers two counters in its constructor — one for every call, one for errors only:
+
+```java
+private final Counter invocationCounter;
+private final Counter errorCounter;
+
+public WeatherToolsFunction(WeatherConfigProperties props, MeterRegistry meterRegistry) {
+    this.invocationCounter = Counter.builder("tool.invocations")
+            .tag("tool", "weather")
+            .description("Number of times the weather tool was invoked")
+            .register(meterRegistry);
+
+    this.errorCounter = Counter.builder("tool.invocation.errors")
+            .tag("tool", "weather")
+            .description("Number of weather tool invocations that resulted in an error")
+            .register(meterRegistry);
+}
+```
+
+In the method body, `invocationCounter` fires on every call. `errorCounter` fires only inside the `catch` block before rethrowing:
+
+```java
+@Override
+public WeatherResponse apply(WeatherRequest weatherRequest) {
+    invocationCounter.increment();          // always
+    try {
+        // ... call weather API ...
+    } catch (Exception e) {
+        errorCounter.increment();           // only on failure
+        throw e;
+    }
+}
+```
+
+The same pattern is applied to all three tools (`weather`, `currency`, `datetime`), producing:
+
+| Prometheus metric | Tag | Meaning |
+|---|---|---|
+| `tool_invocations_total` | `tool=weather\|currency\|datetime` | Cumulative call count per tool |
+| `tool_invocation_errors_total` | `tool=weather\|currency\|datetime` | Cumulative error count per tool |
+
+> **Note — HTTP 200 on tool errors:** When a tool throws, Spring AI's `ToolCallingAdvisor` catches the rethrown exception, converts it to a tool response, and sends it back to the LLM. The LLM generates a graceful fallback reply and the HTTP request still returns 200. The `errorCounter` is still incremented because our `catch` block runs before Spring AI sees the exception.
+
+**Useful PromQL queries:**
+
+```promql
+# cumulative invocations by tool
+sum by(tool)(tool_invocations_total)
+
+# error rate per tool (errors/sec over last 5 min)
+sum by(tool)(rate(tool_invocation_errors_total[5m]))
+
+# error ratio — what % of calls are failing per tool
+sum by(tool)(rate(tool_invocation_errors_total[5m]))
+  /
+sum by(tool)(rate(tool_invocations_total[5m]))
+```
+
+---
+
+### Observation API
+
+#### Why Observation API?
+
+`MeterRegistry` is great for counters and gauges, but it only gives you **metrics**. Every real operation also has a duration, can fail, and is part of a trace. The Observation API handles all three signals in one place:
+
+| Concern | MeterRegistry | Observation API |
+|---|---|---|
+| Increment a counter | ✅ | ✅ (automatically) |
+| Record duration (timer) | Manual `Timer.record()` | ✅ Automatic |
+| Create a trace span | ❌ | ✅ Automatic |
+| Mark an error | Manual error counter | ✅ `observation.error(e)` |
+| One API, three signals | ❌ | ✅ Traces + Metrics + Events |
+
+Use `MeterRegistry` when you need a **simple counter or gauge**. Use the Observation API when you want to **instrument an operation** — something with a start, an end, and a possible failure.
+
+#### How it works
+
+`ObservationRegistry` is the entry point. You create an `Observation`, start it, run your code inside it, and stop it. The OTel bridge on the classpath automatically turns it into both a **span** (in Tempo) and a **timer metric** (in Grafana) — no extra configuration needed.
+
+```java
+Observation observation = Observation.createNotStarted("tool.execution", observationRegistry)
+        .lowCardinalityKeyValue("tool", "weather")
+        .start();
+
+try (Observation.Scope scope = observation.openScope()) {
+    // your business logic here
+} catch (Exception e) {
+    observation.error(e);   // records error on the span AND increments error metrics
+    throw e;
+} finally {
+    observation.stop();     // ends the span and records the timer
+}
+```
+
+Key methods:
+
+- **`lowCardinalityKeyValue`** — adds a tag that is safe to use in metric cardinality (few distinct values)
+- **`openScope`** — propagates the trace context to the current thread so child spans link correctly
+- **`observation.error(e)`** — marks the span as failed and records error metadata
+- **`observation.stop()`** — closes the span and flushes the timer measurement
+
+#### WeatherToolsFunctionV2 — Observation API in practice
+
+![Observation API trace in Tempo](../observability/images/traces_observation_api.png)
+
+Here is the same weather tool rewritten to use the Observation API instead of raw counters. The `MeterRegistry` version is kept intact — this is an additive alternative:
+
+```java
+public class WeatherToolsFunctionV2 implements Function<WeatherRequest, WeatherResponse> {
+
+    private final RestClient restClient;
+    private final WeatherConfigProperties weatherProps;
+    private final ObservationRegistry observationRegistry;
+
+    public WeatherToolsFunctionV2(WeatherConfigProperties props,
+                                   ObservationRegistry observationRegistry) {
+        this.weatherProps = props;
+        this.restClient = RestClient.create(weatherProps.apiUrl());
+        this.observationRegistry = observationRegistry;
+    }
+
+    @Override
+    public WeatherResponse apply(WeatherRequest weatherRequest) {
+        Observation observation = Observation
+                .createNotStarted("tool.execution", observationRegistry)
+                .lowCardinalityKeyValue("tool", "weather")
+                .lowCardinalityKeyValue("city", weatherRequest.city())
+                .start();
+
+        try (Observation.Scope scope = observation.openScope()) {
+            var response = restClient
+                    .get()
+                    .uri("/current.json?key={key}&q={q}",
+                            weatherProps.apiKey(), weatherRequest.city())
+                    .retrieve()
+                    .body(WeatherResponse.class);
+            return response;
+        } catch (Exception e) {
+            observation.error(e);
+            throw e;
+        } finally {
+            observation.stop();
+        }
+    }
+}
+```
+
+What you get for free — without any extra configuration:
+
+| Signal | What appears |
+|---|---|
+| **Trace span** | `tool.execution` span linked to the parent HTTP request span in Tempo |
+| **Timer metric** | `weather_lookup_seconds_count` + `weather_lookup_seconds_sum` in Grafana |
+| **Error tag** | `error=true` on the span and metric when an exception is thrown |
+| **Tags** | `tool=weather`, `city=<value>` as span attributes and metric labels |
+
+#### MeterRegistry vs Observation API — when to use which
+
+```
+Simple counter / gauge
+  → use MeterRegistry directly
+
+Operation with duration, tracing, and error tracking
+  → use Observation API
+
+Both
+  → use Observation API (it subsumes counters and timers automatically)
+```
+
+---
+
 ### Traces
 
 Spring Boot auto-creates spans for every incoming HTTP request. Spring AI adds spans around each LLM call automatically. For custom business spans, use `Observation` directly:
@@ -476,61 +733,6 @@ public String structuredOutputsFewShot(@RequestBody @Valid UserInput userInput) 
 ```
 
 `@Observed` wraps the entire method in a span. Requires the AOP starter (`spring-boot-starter-aop`) to be on the classpath.
-
----
-
-### Metrics
-
-Micrometer automatically exports JVM, HTTP server, and Spring AI token-usage metrics. The `@Observed` annotation and `Observation` API also produce a timer metric (count + duration histogram) alongside the trace span — one API, two signals.
-
-**Auto-exported metrics include:**
-
-| Metric | Description |
-|---|---|
-| `http.server.requests` | Request count, latency per endpoint |
-| `jvm.memory.used` | Heap and non-heap usage |
-| `gen_ai.client.token.usage` | Prompt and completion token counts per LLM call |
-| `fewshot.count` | Custom timer from `@Observed` |
-| `structured_outputs` | Custom timer from `Observation.createNotStarted` |
-
----
-
-### Logs
-
-Logs are correlated with traces via the OTel Logback appender — the active `traceId` and `spanId` are injected into every log record automatically.
-
-**`logback-spring.xml`** — routes all logs through the OTel appender:
-
-```xml
-<appender name="OTEL"
-    class="io.opentelemetry.instrumentation.logback.appender.v1_0.OpenTelemetryAppender"/>
-
-<root level="INFO">
-    <appender-ref ref="CONSOLE"/>
-    <appender-ref ref="OTEL"/>     <!-- ships logs to Loki via OTLP -->
-</root>
-```
-
-**`InstallOpenTelemetryAppender.java`** — wires the Spring-managed `OpenTelemetry` SDK instance into the Logback appender at startup:
-
-```java
-@Component
-class InstallOpenTelemetryAppender implements InitializingBean {
-
-    private final OpenTelemetry openTelemetry;
-
-    InstallOpenTelemetryAppender(OpenTelemetry openTelemetry) {
-        this.openTelemetry = openTelemetry;
-    }
-
-    @Override
-    public void afterPropertiesSet() {
-        OpenTelemetryAppender.install(this.openTelemetry);
-    }
-}
-```
-
-This step is necessary because Logback initialises before the Spring context — the appender exists but has no SDK reference until `afterPropertiesSet` runs.
 
 ---
 
