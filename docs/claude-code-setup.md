@@ -1,5 +1,19 @@
 # Claude Code Setup Guide
 
+## Why AI Coding Assistants Matter Now
+
+Software is being built faster than ever — and the developers who ship fastest are the ones pairing human judgment with AI execution.
+
+AI coding assistants like Claude Code are not autocomplete. They read your entire codebase, reason about architecture, write and fix code, run tests, manage Git, and explain decisions — all in plain conversation. What used to take hours of context-switching now takes a single prompt.
+
+The developers who learn to work *with* AI today are building the skills that will define the next decade of software engineering. This course teaches Spring AI — the framework for building AI-powered Java applications — and Claude Code is the tool you will use to build it faster, understand it deeper, and ship it with confidence.
+
+> **Throughout this course, Claude Code will be a constant companion.** As the lessons progress, you will rely on it more heavily — exploring APIs, generating boilerplate, debugging integration issues, and reviewing your code. Getting comfortable with it now is not optional; it is part of the curriculum.
+>
+> It becomes especially valuable in the later sections of the course — when you reach **Observability** (wiring metrics, traces, and dashboards into your Spring AI app) and **MCP** (Model Context Protocol, building tool-calling servers and clients). These topics involve a lot of moving parts across multiple files, and having Claude read your full codebase and guide you through each step makes the difference between getting stuck and getting it done.
+
+---
+
 A step-by-step guide for setting up and using Claude Code in the terminal for the Spring AI course.
 
 > **Official Quickstart:** https://code.claude.com/docs/en/quickstart
