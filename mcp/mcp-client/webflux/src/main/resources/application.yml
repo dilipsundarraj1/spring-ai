@@ -1,0 +1,10 @@
+server:
+  port: 9001
+
+spring:
+  ai:
+    openai:
+      api-key: ${OPENAI_KEY}
+      chat:
+        options:
+          model: gpt-5-nano #gpt-4.1, gpt-4o

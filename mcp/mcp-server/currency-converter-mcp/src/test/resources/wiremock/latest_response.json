@@ -1,0 +1,11 @@
+{
+  "disclaimer": "Usage subject to terms: https://openexchangerates.org/terms",
+  "license": "https://openexchangerates.org/license",
+  "timestamp": 1783007999,
+  "base": "USD",
+  "rates": {
+    "EUR": 0.85,
+    "GBP": 0.73,
+    "INR": 85.61
+  }
+}

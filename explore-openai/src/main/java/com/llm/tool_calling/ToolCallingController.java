@@ -48,7 +48,7 @@ public class ToolCallingController {
 
         ChatOptions chatOptions = ToolCallingChatOptions.builder()
 //                .toolCallbacks(tools)
-                .internalToolExecutionEnabled(false)
+//                .internalToolExecutionEnabled(false)
                 .build();
         Prompt prompt = new Prompt(userInput.prompt(), chatOptions);
 
