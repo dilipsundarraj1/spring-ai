@@ -23,18 +23,18 @@ spring:
           n: 1
           height: 1024
           width: 1024
-          model: gpt-image-1 # gpt-image-1, dall-e-2, dall-e-3
+          model: gpt-image-1-mini # gpt-image-1, dall-e-2, dall-e-3
           responseFormat: url # url, b64_json
           style: natural # natural, vivid
       audio:
         speech:
           options:
             speed: 1.0
-            model: "tts-1" #tts-1, tts-1-hd or gpt-4o-mini-tts
-            response-format: "mp3"
+            model: "gpt-4o-mini-tts" #tts-1, tts-1-hd or gpt-4o-mini-tts
+            response-format: "mp3" #mp3, wav, or ogg
             voice: "nova" #alloy, echo, fable, onyx, nova, shimmer, sage, coral, and ash
         transcription:
           options:
             prompt: Extract text from the file.
 #            response-format: JSON
-            model: "whisper-1" #"whisper-1", gpt-4o-mini-transcribe, gpt-4o-transcribe
+            model: "gpt-transcribe" #"whisper-1", gpt-4o-mini-transcribe, gpt-4o-transcribe
