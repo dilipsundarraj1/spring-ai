@@ -1,16 +1,65 @@
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+
+- [Claude Code Setup Guide](#claude-code-setup-guide)
+  - [Why AI Coding Assistants Matter Now](#why-ai-coding-assistants-matter-now)
+    - [Why Learning Multiple Assistants Matters](#why-learning-multiple-assistants-matters)
+  - [1. Prerequisites](#1-prerequisites)
+  - [2. Install Claude Code](#2-install-claude-code)
+    - [Choosing a Plan](#choosing-a-plan)
+    - [Option A — Native Install (Recommended)](#option-a--native-install-recommended)
+    - [Option B — Homebrew (macOS)](#option-b--homebrew-macos)
+    - [Option C — WinGet (Windows)](#option-c--winget-windows)
+  - [3. Initialize a Local Git Repository](#3-initialize-a-local-git-repository)
+  - [4. Authenticate with Anthropic](#4-authenticate-with-anthropic)
+  - [5. Verify Installation](#5-verify-installation)
+  - [6. Navigate to Your Project](#6-navigate-to-your-project)
+  - [7. Start Claude Code](#7-start-claude-code)
+  - [8. Essential Commands & Shortcuts](#8-essential-commands--shortcuts)
+    - [Shell Commands (run from your terminal)](#shell-commands-run-from-your-terminal)
+    - [Session Commands (type inside Claude Code)](#session-commands-type-inside-claude-code)
+    - [Run a Shell Command Without Leaving Claude Code](#run-a-shell-command-without-leaving-claude-code)
+    - [Pass a One-Off Prompt Without Entering Interactive Mode](#pass-a-one-off-prompt-without-entering-interactive-mode)
+  - [11. Troubleshooting](#11-troubleshooting)
+    - [`claude: command not found` (macOS / Linux)](#claude-command-not-found-macos--linux)
+    - [`claude` not recognized (Windows)](#claude-not-recognized-windows)
+    - [Authentication Expired](#authentication-expired)
+    - [Claude Does Not See My Project Files](#claude-does-not-see-my-project-files)
+    - [Out of Context / Confused Responses](#out-of-context--confused-responses)
+    - [Java / Gradle Errors When Running the App](#java--gradle-errors-when-running-the-app)
+    - [Windows: Line Ending Issues (CRLF)](#windows-line-ending-issues-crlf)
+  - [Quick Reference Card](#quick-reference-card)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
 # Claude Code Setup Guide
 
 ## Why AI Coding Assistants Matter Now
 
-Software is being built faster than ever — and the developers who ship fastest are the ones pairing human judgment with AI execution.
+You already know the value of coding with AI — you've experienced it firsthand with **GitHub Copilot**. Building on that, here's why it matters and where Claude Code fits in:
 
-AI coding assistants like Claude Code are not autocomplete. They read your entire codebase, reason about architecture, write and fix code, run tests, manage Git, and explain decisions — all in plain conversation. What used to take hours of context-switching now takes a single prompt.
+- **You've felt the speed already.** Copilot showed you how fast you move when an assistant handles the boilerplate and you focus on the problem.
+- **The industry rewards this instinct.** The developers who ship fastest pair human judgment with AI execution. The question is no longer *whether* to code with AI — it's *how well* you can direct it.
+- **Claude Code is agentic by design.** You give it a goal and it reads your entire codebase, reasons about architecture, writes and fixes code, runs tests, and manages Git — carrying out changes across your whole project in plain conversation.
+- **Different tools, different strengths.** Copilot lives in your editor and shines at inline, in-flow coding (it has an agent mode too); Claude Code is terminal-first and built around whole-project, agent-driven work. Neither replaces the other.
+- **Multi-tool fluency is the real skill.** Knowing which assistant to reach for — and when — is what will define the next decade of software engineering.
 
-The developers who learn to work *with* AI today are building the skills that will define the next decade of software engineering. This course teaches Spring AI — the framework for building AI-powered Java applications — and Claude Code is the tool you will use to build it faster, understand it deeper, and ship it with confidence.
-
-> **Throughout this course, Claude Code will be a constant companion.** As the lessons progress, you will rely on it more heavily — exploring APIs, generating boilerplate, debugging integration issues, and reviewing your code. Getting comfortable with it now is not optional; it is part of the curriculum.
+> **From here on, Claude Code is our coding assistant for the rest of the course.** You'll use it in every remaining section — exploring APIs, generating boilerplate, debugging integration issues, and reviewing your code. Getting comfortable with it now is not optional; it is part of the curriculum.
 >
-> It becomes especially valuable in the later sections of the course — when you reach **Observability** (wiring metrics, traces, and dashboards into your Spring AI app) and **MCP** (Model Context Protocol, building tool-calling servers and clients). These topics involve a lot of moving parts across multiple files, and having Claude read your full codebase and guide you through each step makes the difference between getting stuck and getting it done.
+> It proves its worth on the more involved topics too, like **Observability** (wiring metrics, traces, and dashboards into your Spring AI app) and **MCP** (Model Context Protocol, building tool-calling servers and clients). These involve a lot of moving parts across multiple files, and having Claude read your full codebase and guide you through each step makes the difference between getting stuck and getting it done.
+
+---
+
+### Why Learning Multiple Assistants Matters
+
+No single AI tool wins at everything, and the landscape shifts every few months — so fluency with more than one is now a core engineering skill:
+
+- **Right tool for the job.** Knowing both means you always reach for the one that fits the task.
+- **The fundamentals transfer.** Prompting, context, and reviewing output are universal — every tool strengthens skills that outlast any product.
+- **Adaptability wins.** Developers who pick up new assistants quickly stay productive whatever their team standardizes on.
+- **Better judgment.** Using several tools teaches you where AI excels and where it needs supervision.
+
+> **The goal isn't loyalty to a tool — it's fluency with the workflow.** For the rest of this course, Claude Code is that tool.
 
 ---
 
@@ -66,6 +115,23 @@ Run each check command in your terminal. If any fail with "command not found", i
 
 ## 2. Install Claude Code
 
+> **New to Claude Code?** Read the official overview first to understand how it works: https://code.claude.com/docs/en/overview
+
+### Choosing a Plan
+
+Claude Code runs on either a Claude subscription or pay-as-you-go API credits. Any of these works for the course — pick what fits your usage:
+
+| Plan | Best for | Notes |
+|------|----------|-------|
+| **Pro** | Light, individual use | Lowest-cost subscription; enough for everyday tasks |
+| **Max (5×/20×)** | Heavy daily use | Higher usage limits for long, frequent sessions |
+| **Team / Enterprise** | Organizations | Per-seat plans with admin controls |
+| **API (Console)** | Pay-as-you-go | Billed per token via pre-paid credits — no subscription |
+
+> **See current plans and pricing:** https://www.claude.com/pricing — compare limits and cost before you subscribe.
+
+---
+
 ### Option A — Native Install (Recommended)
 
 The official one-liner installs Claude Code with no additional dependencies and **auto-updates in the background**.
@@ -118,79 +184,22 @@ winget install Anthropic.ClaudeCode
 
 ---
 
-## 3. GitHub Setup & Claude + GitHub Integration
+## 3. Initialize a Local Git Repository
 
-### Why Claude and GitHub Work Well Together
-
-Claude Code has deep, native Git awareness. It doesn't just run `git` commands — it understands your branch history, reads diffs, drafts commit messages, creates branches, opens pull requests, and resolves merge conflicts, all through natural conversation. Pairing Claude Code with a GitHub repository gives you:
-
----
-
-### Step 1 — Install the GitHub CLI
-
-The GitHub CLI (`gh`) lets Claude create repositories, open PRs, and interact with GitHub entirely from your terminal.
-
-**macOS:**
-
-```bash
-brew install gh
-```
-
-**Linux (Debian / Ubuntu):**
-
-```bash
-sudo apt install gh
-```
-
-**Linux (Fedora / RHEL):**
-
-```bash
-sudo dnf install gh
-```
-
-**Windows (PowerShell):**
-
-```powershell
-winget install GitHub.cli
-```
-
-Verify and authenticate:
-
-```bash
-gh --version
-gh auth login      # follow the browser prompt to log in to GitHub
-```
-
----
-
-### Step 2 — Configure Git Identity
-
-Git needs your name and email to author commits. Run these once globally:
-
-```bash
-git config --global user.name "Your Name"
-git config --global user.email "your@email.com"
-
-# Verify
-git config --global --list
-```
-
----
-
-### Step 3 — Initialize a Local Repository
+You don't need GitHub or a remote for this course. A **local** Git repository is enough — it gives Claude Code a clean baseline so you can see exactly which files it edits after every change (via `git status` and `git diff`).
 
 If your Spring AI project folder is not yet a Git repository:
 
 ```bash
 cd ~/Dilip/code-with-dilip/spring-ai   # go to your project
-git init                                     # initialize empty repo
-git add .                                    # stage all files
-git commit -m "initial commit"
+git init                               # initialize an empty local repo
+git add .                              # stage all files
+git commit -m "initial commit"         # snapshot the starting point
 ```
 
 If it is already a Git repo (check with `git status`), skip this step.
 
----
+> **Why this matters:** With a committed baseline, any change Claude Code makes shows up clearly. Run `git status` to see which files changed and `git diff` to review the exact edits before keeping them — no remote or push required.
 
 ---
 
