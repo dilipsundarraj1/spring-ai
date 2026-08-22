@@ -1,7 +1,5 @@
 <!-- TOC -->
   * [Module Summary](#module-summary)
-  * [Set up Insomnia Rest Client](#set-up-insomnia-rest-client)
-    * [Set up the HTTP Request collection.](#set-up-the-http-request-collection)
 <!-- TOC -->
 
 ## Module Summary
@@ -14,13 +12,3 @@
 | **mcp** | MCP servers (stdio, WebMVC, WebFlux, currency converter, inventory) and MCP clients (WebMVC + WebFlux). |
 | **explore-llama** | Basic chat using a local Llama model via Ollama through the Spring AI abstraction. |
 | **multiple-llms** | Configuring and routing between OpenAI, Llama (Ollama), Anthropic, and Gemini within a single Spring Boot app. |
-
-## Set up Insomnia Rest Client
-
-- Navigate to this link ->  https://github.com/ArchGPT/insomnium
-- Download and Install the appropriate OS compatible version.
-
-### Set up the HTTP Request collection.
-
-- Open the insomnia Rest Client
-- Import the [Insomnia-http-collection.json](Insomnia-http-collection.json) file.
