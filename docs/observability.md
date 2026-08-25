@@ -35,7 +35,6 @@
     - [How it works](#how-it-works)
     - [WeatherToolsFunctionV2 — Observation API in practice](#weathertoolsfunctionv2--observation-api-in-practice)
     - [Approach 2 — `@Observed` Annotation](#approach-2--observed-annotation)
-    - [MeterRegistry vs Observation API — when to use which](#meterregistry-vs-observation-api--when-to-use-which)
 - [Summary](#summary)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -261,18 +260,30 @@ management:
 
 ### Logs
 
-Traces and metrics are shipped automatically, but logs need two extra files because Logback initialises before the Spring context — the OTel appender exists at startup but has no SDK reference yet.
+Traces and metrics are shipped automatically, but logs need one extra dependency and two extra files because Logback initialises before the Spring context — the OTel appender exists at startup but has no SDK reference yet.
+
+**`build.gradle`** — the Logback appender ships in a separate instrumentation artifact, not in the starter:
+
+```groovy
+//otel-logs
+implementation 'io.opentelemetry.instrumentation:opentelemetry-logback-appender-1.0:2.21.0-alpha'
+```
 
 **`logback-spring.xml`** — adds the OTel appender alongside the console:
 
 ```xml
-<appender name="OTEL"
-    class="io.opentelemetry.instrumentation.logback.appender.v1_0.OpenTelemetryAppender"/>
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <include resource="org/springframework/boot/logging/logback/base.xml"/>
 
-<root level="INFO">
+  <appender name="OTEL" class="io.opentelemetry.instrumentation.logback.appender.v1_0.OpenTelemetryAppender">
+  </appender>
+
+  <root level="INFO">
     <appender-ref ref="CONSOLE"/>
-    <appender-ref ref="OTEL"/>     <!-- ships logs to Loki via OTLP -->
-</root>
+    <appender-ref ref="OTEL"/>
+  </root>
+</configuration>
 ```
 
 **`InstallOpenTelemetryAppender.java`** — wires the Spring-managed `OpenTelemetry` bean into the appender once the context is ready:
@@ -294,7 +305,7 @@ class InstallOpenTelemetryAppender implements InitializingBean {
 }
 ```
 
-Without these two files, logs are written to the console only and never reach Loki.
+Without this dependency and these two files, logs are written to the console only and never reach Loki.
 
 ---
 
