@@ -1,0 +1,24 @@
+// Test-support library shared by the mcp-client integration tests: fake MCP servers
+// with canned tool responses. Deliberately transport-agnostic — it only depends on the
+// @McpTool annotations; the consuming module's test classpath supplies the actual
+// server starter (webmvc or webflux).
+
+apply plugin: 'java-library'
+
+group = 'com.llm'
+version = '0.0.1-SNAPSHOT'
+
+dependencies {
+    api 'org.springframework.ai:spring-ai-mcp-annotations'
+    api 'org.springframework.boot:spring-boot-autoconfigure'
+}
+
+dependencyManagement {
+    imports {
+        mavenBom "org.springframework.ai:spring-ai-bom:${springAiVersion}"
+    }
+}
+
+// library module, not a runnable Spring Boot app
+bootJar { enabled = false }
+jar { enabled = true }

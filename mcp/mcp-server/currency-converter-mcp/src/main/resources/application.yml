@@ -1,0 +1,22 @@
+server:
+  port: 8082
+
+spring:
+  ai:
+    mcp:
+      server:
+        name: currency-converter-mcp
+        version: 0.0.1
+        type: ASYNC
+        protocol: STREAMABLE
+        # Stateless alternative: no sessions, so server restarts and horizontal
+        # scaling are invisible to clients (trade-off: no server -> client
+        # features like notifications, sampling, or elicitation).
+        # To enable, comment out "protocol: STREAMABLE" above and uncomment:
+        # protocol: STATELESS
+        streamable-http:
+          mcp-endpoint: /mcp   # same endpoint property is used by STATELESS mode
+
+currency-exchange:
+  api-key: ${CURRENCY_EXCHANGE_API_KEY}
+  base-url: https://openexchangerates.org/api

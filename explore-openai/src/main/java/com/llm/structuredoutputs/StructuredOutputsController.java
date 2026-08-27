@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.llm.dto.flight.FlightBooking;
 import com.llm.dto.UserInput;
 import com.llm.utils.CommonUtils;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
+import io.micrometer.observation.annotation.Observed;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,13 +31,11 @@ public class StructuredOutputsController {
 
     private static final Logger log = LoggerFactory.getLogger(StructuredOutputsController.class);
 
+
     private final ChatClient chatClient;
 
-    private final ObjectMapper objectMapper;
-
-    public StructuredOutputsController(ChatClient.Builder chatClientBuilder, ObjectMapper objectMapper) {
+    public StructuredOutputsController(ChatClient.Builder chatClientBuilder) {
         this.chatClient = chatClientBuilder.build();
-        this.objectMapper = objectMapper;
     }
 
     @Value("classpath:/prompt-templates/structured_outputs/flight_details.st")
@@ -61,6 +62,7 @@ public class StructuredOutputsController {
     }
 
     @PostMapping("/v1/structured_outputs/fewshot")
+    @Observed(name = "fewshot.count", contextualName = "Structured Outputs Few Shot")
     public String structuredOutputsFewShot(@RequestBody @Valid UserInput userInput) {
 
         log.info("userInput message : {} ", userInput);

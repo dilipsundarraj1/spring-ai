@@ -14,16 +14,30 @@ dependencies {
     implementation("org.springframework.ai:spring-ai-starter-model-openai")
 
     implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
+    //otel
+    implementation 'org.springframework.boot:spring-boot-starter-opentelemetry'
+    //observation
+    implementation 'org.springframework.boot:spring-boot-starter-aop:4.0.0-M2'
+    //otel-logs
+    implementation 'io.opentelemetry.instrumentation:opentelemetry-logback-appender-1.0:2.21.0-alpha'
 
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    // Boot 4 moved @WebMvcTest / MockMvc auto-configuration into the webmvc test starter
+    testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 dependencyManagement {
     imports {
         mavenBom "org.springframework.ai:spring-ai-bom:${springAiVersion}"
+    }
+    dependencies {
+        // Force incubator version to match opentelemetry-sdk:1.62.0 managed by Boot 4.1.0
+        dependency 'io.opentelemetry:opentelemetry-api-incubator:1.62.0-alpha'
     }
 }
 

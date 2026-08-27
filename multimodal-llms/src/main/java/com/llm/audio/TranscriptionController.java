@@ -5,8 +5,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.audio.transcription.AudioTranscriptionPrompt;
 import org.springframework.ai.openai.OpenAiAudioTranscriptionModel;
+import com.openai.models.audio.AudioResponseFormat;
 import org.springframework.ai.openai.OpenAiAudioTranscriptionOptions;
-import org.springframework.ai.openai.api.OpenAiAudioApi;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -55,7 +55,7 @@ public class TranscriptionController {
     ) {
         log.info("prompt  : {}, model : {}, responseFormat : {}, temperature : {} ", prompt, model, responseFormat, temperature);
 
-        var responseFormatEnum = OpenAiAudioApi.TranscriptResponseFormat.valueOf(responseFormat);
+        var responseFormatEnum = AudioResponseFormat.of(responseFormat.toLowerCase());
         temperature = (temperature==null || temperature == 0.0f) ? 1.0f : temperature;
 
         log.info("responseFormatEnum  : {}, temperature : {} ",  responseFormatEnum, temperature);

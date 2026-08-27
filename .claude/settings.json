@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/dilipbandlasundarraj/Dilip/code-with-dilip/spring-ai/.claude/update-toc.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

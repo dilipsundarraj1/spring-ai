@@ -5,7 +5,7 @@ chats: |
 curl -i \
 -d '{"prompt":"Tell me a Joke!"}' \
 -H "Content-Type: application/json" \
--X POST http://localhost:8080/chats
+-X POST http://localhost:8080/springai/v1/chats
 
 --------------
 chats/stream: |
