@@ -39,7 +39,8 @@ public class ChatController {
 			.defaultSystem("You are a helpful assistant. Use the available tools to answer questions "
 					+ "about the current weather, weather forecasts, currency conversions, "
 					+ "and the electronics store's product inventory (stock levels, prices, and availability).")
-			.defaultTools((Object[]) LoggingToolCallback.wrapAll(mcpToolCallbackProvider.getToolCallbacks()))
+			//.defaultTools((Object[]) LoggingToolCallback.wrapAll(mcpToolCallbackProvider.getToolCallbacks()))
+				.defaultTools((Object) mcpToolCallbackProvider.getToolCallbacks())
 			.build();
 	}
 

@@ -16,9 +16,9 @@ spring:
         request-timeout: 30s
         streamable-http:
           connections:
-#            weather-server:
-#              url: http://localhost:8081
-#              endpoint: /mcp
+            weather-server:
+              url: http://localhost:8080
+              endpoint: /mcp
             currency-converter:
               url: http://localhost:8082
               endpoint: /mcp

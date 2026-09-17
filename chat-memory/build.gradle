@@ -1,0 +1,40 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot'
+    id 'io.spring.dependency-management'
+}
+
+group = 'com.llm'
+version = '0.0.1-SNAPSHOT'
+
+dependencies {
+    //web
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+    //openai
+    implementation("org.springframework.ai:spring-ai-starter-model-openai")
+
+    //chat memory - persists the conversation using the JdbcChatMemoryRepository
+    implementation("org.springframework.ai:spring-ai-starter-model-chat-memory-repository-jdbc")
+    runtimeOnly 'org.postgresql:postgresql'
+
+    developmentOnly 'org.springframework.boot:spring-boot-devtools'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    // Boot 4 moved @WebMvcTest / MockMvc auto-configuration into the webmvc test starter
+    testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+    // in-memory database for the JDBC chat memory tests (HSQLDB is a supported chat memory dialect)
+    testRuntimeOnly 'org.hsqldb:hsqldb'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+dependencyManagement {
+    imports {
+        mavenBom "org.springframework.ai:spring-ai-bom:${springAiVersion}"
+    }
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}

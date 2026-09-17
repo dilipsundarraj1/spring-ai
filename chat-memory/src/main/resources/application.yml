@@ -1,0 +1,37 @@
+server:
+  port: 8084
+  servlet:
+    context-path: /springai
+spring:
+  application:
+    name: chat-memory
+  ai:
+    openai:
+      api-key: ${OPENAI_KEY}
+      chat:
+        options:
+          model: gpt-5-nano #gpt-4.1, gpt-4o
+          temperature: 1.0
+          max-completion-tokens: 2000
+    chat:
+      memory:
+        repository:
+          jdbc:
+            # Default is "embedded" (H2/HSQLDB only). Postgres is not embedded, so without this
+            # the SPRING_AI_CHAT_MEMORY table is never created.
+            initialize-schema: always
+  datasource:
+    driverClassName: org.postgresql.Driver
+    url: jdbc:postgresql://localhost:5432/docs
+    username: admin
+    password: password
+    hikari:
+      minimumIdle: 1
+      maximumPoolSize: 10
+logging:
+  level:
+    org:
+      springframework:
+        # shows the full message list (history included) that is sent to the LLM
+        ai.chat.client.advisor.SimpleLoggerAdvisor: DEBUG
+    com.llm: INFO
