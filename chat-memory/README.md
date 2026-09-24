@@ -175,7 +175,8 @@ chatClient.prompt()
 
 ## MessageWindowChatMemory
 
-Keeps a **sliding window** of the most recent messages (default: **20**).
+Keeps a **sliding window** of the most recent messages (default: **20**) — a fixed-size view that slides forward over a
+conversation that keeps growing. When a new message arrives at one end, the oldest falls off the other.
 
 ```java
 ChatMemory chatMemory = MessageWindowChatMemory.builder()
@@ -184,9 +185,35 @@ ChatMemory chatMemory = MessageWindowChatMemory.builder()
         .build();
 ```
 
-- When the window is full, the **oldest** messages are evicted.
-- Eviction happens on **turn boundaries** — a whole turn (a `UserMessage` plus the assistant replies/tool calls that followed it) is removed at once, so the model never sees half a turn.
-- `SystemMessage`s are always kept.
+- **The window counts messages, not turns or tokens.** A normal turn is two messages (`UserMessage` +
+  `AssistantMessage`), so `maxMessages(10)` is roughly five exchanges — but a turn that involves tool calls is longer,
+  so it is not a fixed number of exchanges.
+- **Trimming happens on write, not on read.** `add(...)` loads the conversation, appends the new message, trims, and
+  saves the trimmed list back; `get(...)` simply returns whatever the repository holds. Eviction is therefore
+  **destructive** — with the JDBC repository the evicted rows are really deleted from `SPRING_AI_CHAT_MEMORY`, not
+  just hidden from the LLM.
+- **The cut snaps forward to the next `UserMessage`**, so the window always *starts* at a complete turn — an assistant
+  reply or tool result is never kept without the user message that caused it. This means the window can end up
+  **smaller** than `maxMessages`, never larger.
+- **`SystemMessage`s are never evicted**, but they still count against the budget: with one system message and
+  `maxMessages(10)` you get nine slots of actual conversation. Adding a *new* system message removes all previous ones.
+
+Evicting a whole turn at `maxMessages(10)` looks like this:
+
+```text
+after 5 turns — 10 messages, exactly full:
+  [U1 A1 U2 A2 U3 A3 U4 A4 U5 A5]
+
+you ask a 6th question — U6 is appended, putting the window 1 over:
+  raw cut = 1     -> would drop U1, leaving the window starting at A1 (an ASSISTANT)
+  snap forward    -> drop U1 *and* A1
+
+  [U2 A2 U3 A3 U4 A4 U5 A5 U6]     <- 9 messages, the whole first turn is gone
+```
+
+Once "My name is Dilip" scrolls out of the window, the model genuinely cannot answer "What is my name?" any more.
+`GET /v1/memory/chats/{conversationId}` is the easiest way to watch this happen — it returns exactly the window, which
+is precisely what the next call will send.
 
 Why not keep everything? Every message in memory is sent to the LLM on **every** call — more messages means more tokens, more cost, higher latency, and eventually hitting the model's context window limit.
 
