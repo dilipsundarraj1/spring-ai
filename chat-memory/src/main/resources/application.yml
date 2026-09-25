@@ -10,7 +10,7 @@ spring:
       api-key: ${OPENAI_KEY}
       chat:
         options:
-          model: gpt-5-nano #gpt-4.1, gpt-4o
+          model: gpt-5.5 #gpt-5-nano is too weak to ground answers in recalled memory; gpt-4.1, gpt-4o also work
           temperature: 1.0
           max-completion-tokens: 2000
     chat:

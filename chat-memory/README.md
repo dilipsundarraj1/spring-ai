@@ -21,22 +21,27 @@
   - [Chat Memory with ChatModel (no advisor)](#chat-memory-with-chatmodel-no-advisor)
   - [Semantic Chat Memory with a Vector Store](#semantic-chat-memory-with-a-vector-store)
     - [How it differs from `MessageChatMemoryAdvisor`](#how-it-differs-from-messagechatmemoryadvisor)
+    - [What the advisor does on each call](#what-the-advisor-does-on-each-call)
+    - [Why memory goes into the system message](#why-memory-goes-into-the-system-message)
     - [Dependencies — `build.gradle`](#dependencies--buildgradle)
     - [Configuration — `application.yml`](#configuration--applicationyml-1)
     - [Setting up the controller](#setting-up-the-controller-1)
-    - [What the advisor does on each call](#what-the-advisor-does-on-each-call)
-    - [Why memory goes into the system message](#why-memory-goes-into-the-system-message)
     - [Chat — `POST /v4/memory/chats/{conversationId}`](#chat--post-v4memorychatsconversationid)
     - [Recall — `GET /v4/memory/chats/{conversationId}?query=...`](#recall--get-v4memorychatsconversationidquery)
     - [Clear — `DELETE /v4/memory/chats/{conversationId}`](#clear--delete-v4memorychatsconversationid)
     - [Trade-offs](#trade-offs)
+  - [Taking Control: Semantic Memory Without the Advisor](#taking-control-semantic-memory-without-the-advisor)
+    - [The three steps the advisor was doing for you](#the-three-steps-the-advisor-was-doing-for-you)
+    - [Filtering what comes back: scores and duplicates](#filtering-what-comes-back-scores-and-duplicates)
+    - [Seeing why a relevance floor is harder than it looks](#seeing-why-a-relevance-floor-is-harder-than-it-looks)
+    - [Try it](#try-it)
   - [Other Chat Memory Repositories](#other-chat-memory-repositories)
     - [VectorStoreChatMemoryAdvisor](#vectorstorechatmemoryadvisor)
   - [Limitations](#limitations)
   - [Migrating from older Spring AI versions](#migrating-from-older-spring-ai-versions)
   - [Running the module](#running-the-module)
     - [Endpoints](#endpoints)
-    - [Try it](#try-it)
+    - [Try it](#try-it-1)
     - [Tests](#tests)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -596,71 +601,6 @@ recall is driven by meaning, not by recency.
 > `spring.ai.chat.memory.*` properties, no `MessageWindowChatMemory`, and no `ChatMemoryRepository` are involved on
 > this path.
 
-### Dependencies — `build.gradle`
-
-```groovy
-//chat memory - semantic recall with VectorStoreChatMemoryAdvisor
-implementation("org.springframework.ai:spring-ai-vector-store-advisor")
-implementation("org.springframework.ai:spring-ai-starter-vector-store-pgvector")
-```
-
-> **Spring AI 2.0 rename:** the advisor artifact used to be `spring-ai-advisors-vector-store`; in 2.0 it is
-> **`spring-ai-vector-store-advisor`** (the old coordinates stop at `2.0.0-M8`). The class also lives in a new package:
-> `org.springframework.ai.chat.client.advisor.vectorstore.VectorStoreChatMemoryAdvisor`.
-
-The pgvector starter gives us the `VectorStore` bean, reusing the Postgres container this module already needs. The
-embeddings come from the OpenAI starter's auto-configured `EmbeddingModel` — no extra configuration.
-
-### Configuration — `application.yml`
-
-```yaml
-spring:
-  ai:
-    vectorstore:
-      pgvector:
-        initialize-schema: true
-        # kept separate from explore-rag's default "vector_store" table, which holds ingested documents
-        table-name: chat_memory_vector_store
-```
-
-`initialize-schema: true` creates the table and the `vector` / `hstore` extensions on startup. The table name is
-overridden so conversation memory doesn't land in the same table `explore-rag` uses for ingested PDFs.
-
-> **Watch out in tests:** that schema init runs `CREATE EXTENSION IF NOT EXISTS vector`, which HSQLDB cannot parse.
-> `JdbcChatMemoryControllerIntegrationTest` boots the whole app on HSQLDB, so it sets
-> `spring.ai.vectorstore.pgvector.initialize-schema=false` — the `VectorStore` bean is still created, it just never
-> touches the database there.
-
-### Setting up the controller
-
-```java
-public VectorStoreChatMemoryController(ChatClient.Builder chatClientBuilder, VectorStore vectorStore) {
-    this.vectorStore = vectorStore;
-
-    this.chatClient = chatClientBuilder
-            .defaultSystem("You are a helpful assistant. Use the long term conversation memory when it is relevant.")
-            .defaultAdvisors(
-                    VectorStoreChatMemoryAdvisor.builder(vectorStore)
-                            .defaultTopK(TOP_K)
-                            .build(),
-                    new SimpleLoggerAdvisor())
-            .build();
-}
-```
-
-- **`builder(vectorStore)`** — the advisor takes the store, not a `ChatMemory`. That single argument is the whole setup.
-- **`defaultTopK(5)`** — how many past messages to retrieve per question. The advisor's own default is **20**;
-  five keeps the demo's system prompt readable.
-- **`defaultSystem(...)` matters here.** The advisor reads your system text, substitutes it as `{instructions}` in its
-  own template, and **replaces** the system message with the result — `augmentSystemMessage` is a replace, and it
-  inserts a system message if you never set one. Leave `defaultSystem(...)` off and `{instructions}` renders empty:
-  memory still arrives, but the model's entire system prompt becomes "here is some past conversation" — no role, no
-  task, no tone.
-- **The `VectorStore` is kept as a field** so the recall and clear endpoints can query and delete directly; the
-  advisor exposes no API for either.
-- **`SimpleLoggerAdvisor` after it** shows the fully assembled system message at `DEBUG` — the best way to see what
-  was actually recalled.
-
 ### What the advisor does on each call
 
 ```mermaid
@@ -670,7 +610,7 @@ sequenceDiagram
     participant V as VectorStore (pgvector)
     participant L as LLM
     C->>A: prompt "What is my name?" (conversationId = user-1)
-    A->>V: similaritySearch(query="What is my name?", topK=5, conversationId=user-1)
+    A->>V: similaritySearch(query="What is my name?", topK=20, conversationId=user-1)
     V-->>A: nearest past messages
     A->>A: render them into the SYSTEM message
     A->>V: write the new UserMessage
@@ -727,7 +667,7 @@ flowchart TB
         M5["ASSISTANT · Why did the query go to therapy?"]
     end
 
-    Q --> SEARCH["similaritySearch · topK = 5 · conversationId = user-1"]
+    Q --> SEARCH["similaritySearch · topK = 20 · conversationId = user-1"]
     CONV --> SEARCH
 
     SEARCH == "recalled — closest in meaning" ==> H1["USER · ...blue Tesla"]
@@ -762,6 +702,72 @@ authoritative. Spring AI mitigates it by convention: entries are XML-escaped, wr
 `<memory-entry type="...">` elements, and the template tells the model to treat the block as historical data only. Its
 own javadoc is blunt that this does not eliminate the root cause — so for agents with tool access, prefer
 `MessageChatMemoryAdvisor`, which keeps user content in typed `Message` objects and never rewrites your instructions.
+
+### Dependencies — `build.gradle`
+
+```groovy
+//chat memory - semantic recall with VectorStoreChatMemoryAdvisor
+implementation("org.springframework.ai:spring-ai-vector-store-advisor")
+implementation("org.springframework.ai:spring-ai-starter-vector-store-pgvector")
+```
+
+> **Spring AI 2.0 rename:** the advisor artifact used to be `spring-ai-advisors-vector-store`; in 2.0 it is
+> **`spring-ai-vector-store-advisor`** (the old coordinates stop at `2.0.0-M8`). The class also lives in a new package:
+> `org.springframework.ai.chat.client.advisor.vectorstore.VectorStoreChatMemoryAdvisor`.
+
+The pgvector starter gives us the `VectorStore` bean, reusing the Postgres container this module already needs. The
+embeddings come from the OpenAI starter's auto-configured `EmbeddingModel` — no extra configuration.
+
+### Configuration — `application.yml`
+
+```yaml
+spring:
+  ai:
+    vectorstore:
+      pgvector:
+        initialize-schema: true
+        # kept separate from explore-rag's default "vector_store" table, which holds ingested documents
+        table-name: chat_memory_vector_store
+```
+
+`initialize-schema: true` creates the table and the `vector` / `hstore` extensions on startup. The table name is
+overridden so conversation memory doesn't land in the same table `explore-rag` uses for ingested PDFs.
+
+> **Watch out in tests:** that schema init runs `CREATE EXTENSION IF NOT EXISTS vector`, which HSQLDB cannot parse.
+> `JdbcChatMemoryControllerIntegrationTest` boots the whole app on HSQLDB, so it sets
+> `spring.ai.vectorstore.pgvector.initialize-schema=false` — the `VectorStore` bean is still created, it just never
+> touches the database there.
+
+### Setting up the controller
+
+```java
+public VectorStoreChatMemoryController(ChatClient.Builder chatClientBuilder, VectorStore vectorStore) {
+    this.vectorStore = vectorStore;
+
+    this.chatClient = chatClientBuilder
+            .defaultSystem("You are a helpful assistant. Use the long term conversation memory when it is relevant.")
+            .defaultAdvisors(
+                    VectorStoreChatMemoryAdvisor.builder(vectorStore)
+                            .defaultTopK(TOP_K)
+                            .build(),
+                    new SimpleLoggerAdvisor())
+            .build();
+}
+```
+
+- **`builder(vectorStore)`** — the advisor takes the store, not a `ChatMemory`. That single argument is the whole setup.
+- **`defaultTopK(20)`** — how many past messages to retrieve per question, the advisor's own default. Resist the
+  urge to shrink it for readability: the advisor stores **every question too**, so repeated questions sit in the
+  results at similarity `1.0` and push the actual answers out (see [Trade-offs](#trade-offs)).
+- **`defaultSystem(...)` matters here.** The advisor reads your system text, substitutes it as `{instructions}` in its
+  own template, and **replaces** the system message with the result — `augmentSystemMessage` is a replace, and it
+  inserts a system message if you never set one. Leave `defaultSystem(...)` off and `{instructions}` renders empty:
+  memory still arrives, but the model's entire system prompt becomes "here is some past conversation" — no role, no
+  task, no tone.
+- **The `VectorStore` is kept as a field** so the recall and clear endpoints can query and delete directly; the
+  advisor exposes no API for either.
+- **`SimpleLoggerAdvisor` after it** shows the fully assembled system message at `DEBUG` — the best way to see what
+  was actually recalled.
 
 ### Chat — `POST /v4/memory/chats/{conversationId}`
 
@@ -803,8 +809,8 @@ curl -X POST http://localhost:8084/springai/v4/memory/chats/user-1 \
 curl -X POST http://localhost:8084/springai/v4/memory/chats/user-1 \
   -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}'
 
-# widen the search for one call
-curl -X POST "http://localhost:8084/springai/v4/memory/chats/user-1?topK=20" \
+# narrow the search for one call, to see recall degrade
+curl -X POST "http://localhost:8084/springai/v4/memory/chats/user-1?topK=2" \
   -H "Content-Type: application/json" -d '{"prompt":"What do you know about me?"}'
 ```
 
@@ -851,6 +857,11 @@ curl -i -X DELETE http://localhost:8084/springai/v4/memory/chats/user-1
 
 ### Trade-offs
 
+- **Recall degrades as you repeat yourself.** Every *question* is stored too, so asking "What car do I drive?" three
+  times leaves three copies sitting at similarity `1.0` — perfect matches that carry no information. With a small
+  `topK` they fill the whole window and the answer never reaches the model, which then says it does not know. The
+  assistant's own "I don't know" is stored as well, and is recalled next time. Keep `topK` generous, and clear a
+  conversation (`DELETE /v4/...`) once it is polluted.
 - **Nothing is ever evicted.** The store grows with every message — good for recall, but you own the retention
   policy (a scheduled delete, a TTL in the store, or nothing at all).
 - **Every call costs embeddings**: one for the question on read, one per message on write. That is real money and
@@ -861,6 +872,176 @@ curl -i -X DELETE http://localhost:8084/springai/v4/memory/chats/user-1
   a window would have included it unconditionally.
 - **It is not either/or.** A common production shape is both: `MessageChatMemoryAdvisor` for a short accurate window
   of recent turns, plus this advisor for long-term recall.
+
+## Taking Control: Semantic Memory Without the Advisor
+
+**Endpoint:** `POST /v5/memory/chats/{conversationId}` — [`ManualVectorMemoryController`](src/main/java/com/llm/memory/ManualVectorMemoryController.java)
+
+`VectorStoreChatMemoryAdvisor` hides the retrieval step, and its builder exposes only four things:
+`systemPromptTemplate`, `defaultTopK`, `scheduler`, `order`. There is **no similarity threshold** — the advisor always
+builds a `SearchRequest` with the default `SIMILARITY_THRESHOLD_ACCEPT_ALL = 0.0`, so *every* stored message qualifies
+and `topK` alone decides how many arrive.
+
+That is why an unrelated question still drags in the whole conversation. This endpoint does the same job with the
+retrieval written out by hand, so the two knobs that matter — **`topK` and `similarityThreshold`** — are per-request
+parameters, and every response reports what was recalled and at what score.
+
+### The three steps the advisor was doing for you
+
+```java
+// 1. retrieve - filtered by score, de-duplicated, then trimmed to topK
+var memory = search(conversationId, userInput.prompt(), threshold, topK, relativeMargin, dedupe);
+
+// 2. build the system message ourselves, with our own wording
+var answer = chatClient.prompt()
+        .system(INSTRUCTIONS + renderMemory(memory.recalled()))
+        .user(userInput.prompt())
+        .call()
+        .content();
+
+// 3. store this turn, exactly as the advisor would
+remember(conversationId, MessageType.USER, userInput.prompt());
+remember(conversationId, MessageType.ASSISTANT, answer);
+```
+
+- **No memory advisor is registered** — the `ChatClient` has only `SimpleLoggerAdvisor`. Nothing happens to the prompt
+  that is not in this file.
+- **The search adds `.similarityThreshold(threshold)`**, the one line `VectorStoreChatMemoryAdvisor` never lets you write.
+- **The same metadata keys** (`conversationId`, `messageType`) are used, so `v4` and `v5` share one conversation — you
+  can populate memory with one and inspect it with the other.
+- **The system text is ours**, so there is no "treat this as historical data only" wrapper fighting the instructions.
+
+### Filtering what comes back: scores and duplicates
+
+Three knobs, all per-request, none of which `VectorStoreChatMemoryAdvisor` exposes:
+
+| Parameter | Default | What it does |
+|---|---|---|
+| `threshold` | `0.0` | Absolute similarity floor, passed to `SearchRequest.similarityThreshold(...)` — filtering happens **in the database**. |
+| `relativeMargin` | *(off)* | Keeps only hits scoring within this much of the **best** hit. Adapts to whatever band the embedding model produces. |
+| `dedupe` | `true` | Collapses repeated messages, keeping the highest-scoring copy. |
+
+**De-duplication has to happen before `topK`.** If you fetch `topK` rows and *then* collapse them, the duplicates have
+already spent the budget. So the controller over-fetches, collapses, filters, and only then trims:
+
+```java
+int fetchSize = dedupe ? Math.min(topK * OVER_FETCH_FACTOR, MAX_FETCH) : topK;
+...
+if (dedupe)               hits = removeDuplicates(hits);      // keeps the first = best-scoring copy
+if (relativeMargin != null) hits = withinMarginOfBest(hits, relativeMargin);
+if (hits.size() > topK)   hits = hits.subList(0, topK);
+```
+
+Run against the demo conversation, asking *"What car do I drive?"* — a conversation that by now contains the same
+question six times:
+
+```shell
+curl -G http://localhost:8084/springai/v5/memory/chats/user-1 \
+  --data-urlencode "query=What car do I drive?" --data-urlencode "dedupe=false"
+```
+
+| Filters | `fetchedFromStore` | `recalledCount` | Top of the list |
+|---|---|---|---|
+| `dedupe=false` | 20 | **20** | six identical copies of "What car do I drive?" at `0.8467` |
+| `dedupe=true` | 20 | **13** | one copy of the question, then the answers |
+| `dedupe=true&relativeMargin=0.05` | 20 | **3** | only what scores within `0.05` of the best hit |
+
+Two things to point out to students here:
+
+- **De-duplication is the fix for the crowding problem**, not a bigger `topK`. The duplicates are *perfect* matches, so
+  no amount of budget demotes them — they have to be removed.
+- **Aggressive filtering has its own failure mode.** At `relativeMargin=0.05` the three survivors include the
+  assistant's own earlier `"I don't know what car you drive"` (`0.8215`) while the user's original
+  `"My name is Dilip and I drive a blue Tesla"` (`0.7906`) is cut. A tight relative window keeps whatever *scores*
+  highest, which is not the same as whatever is *true*.
+
+That second point is the honest summary of this whole endpoint: these knobs give you control, not correctness. The
+retrieval is now visible and tunable — deciding what *should* come back is still a design problem.
+
+### Seeing why a relevance floor is harder than it looks
+
+The response carries the evidence, so no log reading is needed:
+
+```shell
+curl -s -X POST http://localhost:8084/springai/v5/memory/chats/user-1 \
+  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}' | jq
+```
+
+```json
+{
+  "answer": "You drive a blue Tesla.",
+  "memory": {
+    "similarityThreshold": 0.0,
+    "relativeMargin": null,
+    "dedupe": true,
+    "topK": 20,
+    "fetchedFromStore": 20,
+    "recalledCount": 13,
+    "recalled": [
+      { "type": "USER",      "text": "What car do I drive?", "score": 0.8467 },
+      { "type": "ASSISTANT", "text": "You drive a blue Tesla.", "score": 0.8087 }
+    ]
+  }
+}
+```
+
+`fetchedFromStore` vs `recalledCount` is the whole story in two numbers: what the vector store returned, and what
+survived filtering.
+
+Or skip the LLM entirely and just look at the retrieval — no tokens spent:
+
+```shell
+curl -G http://localhost:8084/springai/v5/memory/chats/user-1 \
+  --data-urlencode "query=What the weather?" --data-urlencode "threshold=0.0" | jq
+```
+
+**Now the lesson.** Run that against a conversation about cars, names and databases and the scores come back like this
+(real numbers from this module):
+
+| similarity | message |
+|---|---|
+| 0.9194 | `USER` What car do I drive? |
+| 0.8954 | `USER` I work as a software architect |
+| 0.8678 | `USER` My name is Dilip and I drive a blue Tesla |
+| 0.8542 | `USER` Tell me a joke about databases |
+| 0.8240 | `ASSISTANT` You drive a blue Tesla. |
+| 0.7970 | `ASSISTANT` Nice to meet you, Dilip. As a software architect… |
+
+Every message scores between **0.79 and 0.92** against a question about the *weather* — a topic that appears nowhere in
+the conversation. With OpenAI embeddings, two unrelated short English sentences are still far from orthogonal, so:
+
+- A threshold of `0.78` filters **nothing**.
+- A threshold of `0.87` would keep "What car do I drive?" (`0.9194`, a stored question carrying no information) and
+  throw away "You drive a blue Tesla" (`0.8240`, the actual answer).
+
+So the knob is real, but an **absolute cosine floor is a weak instrument for short chat messages** — the scores are
+compressed into a narrow band, and the ranking inside that band is not a reliable proxy for usefulness. That is worth
+knowing before you reach for it in production, where the usual answers are a relative cutoff (keep hits within *x* of
+the top score), a reranker, or simply not storing the questions in the first place.
+
+`DEFAULT_SIMILARITY_THRESHOLD` is therefore **0.0** in this controller — identical to the advisor — so you start from
+the same behaviour and change one thing at a time.
+
+### Try it
+
+```shell
+# the advisor's behaviour, but with the retrieval visible
+curl -s -X POST http://localhost:8084/springai/v5/memory/chats/user-1 \
+  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}' | jq '.recalledCount, .answer'
+
+# duplicates in, duplicates out
+curl -G http://localhost:8084/springai/v5/memory/chats/user-1 \
+  --data-urlencode "query=What car do I drive?" --data-urlencode "dedupe=false" | jq '.recalledCount'
+
+# collapse them, then keep only what scores near the best hit
+curl -G http://localhost:8084/springai/v5/memory/chats/user-1 \
+  --data-urlencode "query=What car do I drive?" --data-urlencode "relativeMargin=0.05" | jq
+
+# an unrelated question - how much does a floor actually exclude?
+curl -G http://localhost:8084/springai/v5/memory/chats/user-1 \
+  --data-urlencode "query=What is the weather?" --data-urlencode "threshold=0.0" | jq 'length'
+```
+
 
 ---
 
@@ -936,6 +1117,8 @@ export OPENAI_KEY=<your-key>
 | `POST` | `/springai/v4/memory/chats/{conversationId}` | Semantic memory in a vector store (`?topK=` to widen recall) |
 | `GET` | `/springai/v4/memory/chats/{conversationId}?query=...` | What the similarity search recalls for a question |
 | `DELETE` | `/springai/v4/memory/chats/{conversationId}` | Delete a conversation from the vector store |
+| `POST` | `/springai/v5/memory/chats/{conversationId}` | Semantic memory with the retrieval written by hand (`?threshold=`, `?topK=`, `?relativeMargin=`, `?dedupe=`) |
+| `GET` | `/springai/v5/memory/chats/{conversationId}?query=...` | The retrieval step alone, with similarity scores |
 
 ### Try it
 

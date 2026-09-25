@@ -36,9 +36,11 @@ public class VectorStoreChatMemoryController {
     private static final Logger log = LoggerFactory.getLogger(VectorStoreChatMemoryController.class);
 
     /**
-     * How many past messages are retrieved per question (the advisor's default is 20).
+     * How many past messages are retrieved per question - the advisor's own default.
+     * Keep this generous: the advisor stores every question too, so repeated questions sit at
+     * similarity 1.0 and push the actual answers out of a small window.
      */
-    static final int TOP_K = 5;
+    static final int TOP_K = 20;
 
     /**
      * Metadata keys written by VectorStoreChatMemoryAdvisor on every stored message.
@@ -56,7 +58,11 @@ public class VectorStoreChatMemoryController {
 
         // The advisor writes into the vector store itself - no ChatMemory / ChatMemoryRepository involved.
         this.chatClient = chatClientBuilder
-                .defaultSystem("You are a helpful assistant. Use the long term conversation memory when it is relevant.")
+                .defaultSystem("""
+                        You are a helpful assistant.
+                        The LONG_TERM_MEMORY section holds facts this user told you earlier in this same
+                        conversation. Treat them as true and answer from them. If the answer is there, use it
+                        instead of replying that you do not know or have no access to the user's data.""")
                 .defaultAdvisors(
                         VectorStoreChatMemoryAdvisor.builder(vectorStore)
                                 .defaultTopK(TOP_K)
