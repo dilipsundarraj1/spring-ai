@@ -35,7 +35,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "spring.datasource.url=jdbc:hsqldb:mem:chat-memory",
         "spring.datasource.driver-class-name=org.hsqldb.jdbc.JDBCDriver",
         "spring.datasource.username=sa",
-        "spring.datasource.password="
+        "spring.datasource.password=",
+        // pgvector's schema init runs "CREATE EXTENSION vector", which HSQLDB cannot parse.
+        // The VectorStore bean is still created, it just never touches the database here.
+        "spring.ai.vectorstore.pgvector.initialize-schema=false"
 })
 @AutoConfigureMockMvc
 @Import(JdbcChatMemoryControllerIntegrationTest.FakeChatModelConfig.class)

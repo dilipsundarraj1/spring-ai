@@ -20,6 +20,11 @@ spring:
             # Default is "embedded" (H2/HSQLDB only). Postgres is not embedded, so without this
             # the SPRING_AI_CHAT_MEMORY table is never created.
             initialize-schema: always
+    vectorstore:
+      pgvector:
+        initialize-schema: true
+        # kept separate from explore-rag's default "vector_store" table, which holds ingested documents
+        table-name: chat_memory_vector_store
   datasource:
     driverClassName: org.postgresql.Driver
     url: jdbc:postgresql://localhost:5432/docs
