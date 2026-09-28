@@ -3,6 +3,7 @@
 
 - [Chat Memory in Spring AI](#chat-memory-in-spring-ai)
   - [Why Chat Memory?](#why-chat-memory)
+    - [See it for yourself](#see-it-for-yourself)
     - [Chat Memory vs Chat History](#chat-memory-vs-chat-history)
   - [Core Abstractions](#core-abstractions)
     - [How the advisor works](#how-the-advisor-works)
@@ -13,11 +14,14 @@
     - [Chat — `POST /v1/memory/chats/{conversationId}`](#chat--post-v1memorychatsconversationid)
     - [History — `GET /v1/memory/chats/{conversationId}`](#history--get-v1memorychatsconversationid)
     - [Clear — `DELETE /v1/memory/chats/{conversationId}`](#clear--delete-v1memorychatsconversationid)
+    - [Testing it: success, then eviction](#testing-it-success-then-eviction)
   - [Persistent Chat Memory with JDBC (Postgres)](#persistent-chat-memory-with-jdbc-postgres)
     - [Dependency — `build.gradle`](#dependency--buildgradle)
     - [Configuration — `application.yml`](#configuration--applicationyml)
     - [The table](#the-table)
-    - [Configuring it manually](#configuring-it-manually)
+    - [Testing it: success, restart, then eviction](#testing-it-success-restart-then-eviction)
+    - [Widening the window — `ChatMemoryConfig`](#widening-the-window--chatmemoryconfig)
+    - [Configuring the repository manually](#configuring-the-repository-manually)
   - [Chat Memory with ChatModel (no advisor)](#chat-memory-with-chatmodel-no-advisor)
   - [Semantic Chat Memory with a Vector Store](#semantic-chat-memory-with-a-vector-store)
     - [How it differs from `MessageChatMemoryAdvisor`](#how-it-differs-from-messagechatmemoryadvisor)
@@ -71,6 +75,32 @@ So how does ChatGPT appear to remember?
 - On every new prompt, it **replays** those messages to the LLM along with the new one.
 - The LLM re-reads the whole conversation each time and answers as if it remembered.
 - Spring AI gives you all of this out of the box through the **Chat Memory** abstraction — you don't write the plumbing.
+
+### See it for yourself
+
+[`StatelessChatController`](src/main/java/com/llm/chats/StatelessChatController.java) is `POST /v1/chats` — a plain
+`ChatClient` with no memory advisor of any kind. Run these two commands **in order, in the same terminal**:
+
+```shell
+curl -X POST http://localhost:8084/springai/v1/chats \
+  -H "Content-Type: application/json" -d '{"prompt":"My name is Dilip"}'
+
+curl -X POST http://localhost:8084/springai/v1/chats \
+  -H "Content-Type: application/json" -d '{"prompt":"What is my name?"}'
+```
+
+The second call does not know the answer. Nothing was forgotten and nothing expired — the first message was simply
+never sent again, because there is no `conversationId`, no window, and nowhere for it to have been kept.
+
+```shell
+# proof that it is the *prompt* doing the work, not memory: put both messages in one call
+curl -X POST http://localhost:8084/springai/v1/chats \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"My name is Dilip. What is my name?"}'
+```
+
+That one answers correctly. The model was never the thing that remembered — the prompt was. Everything in this module
+is about how your application rebuilds that prompt on every call.
 
 ### Chat Memory vs Chat History
 
@@ -415,6 +445,105 @@ curl -X POST http://localhost:8084/springai/v1/memory/chats/user-1 \
 # -> I don't know your name.   <-- memory was cleared
 ```
 
+### Testing it: success, then eviction
+
+**Success — inside the window.** Same `conversationId`, and the fact is replayed:
+
+```shell
+curl -X POST http://localhost:8084/springai/v1/memory/chats/demo-1 \
+  -H "Content-Type: application/json" -d '{"prompt":"My name is Dilip and I drive a blue Tesla"}'
+# -> Nice to meet you, Dilip! A blue Tesla sounds like a great ride.
+
+curl -X POST http://localhost:8084/springai/v1/memory/chats/demo-1 \
+  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}'
+# -> You drive a blue Tesla.
+```
+
+**Failure — once eviction kicks in.** `MAX_MESSAGES = 10` is five Turns, so a sixth Turn pushes the first one out. State
+the fact, then run five *neutral* turns so nothing repeats it:
+
+```shell
+curl -X POST http://localhost:8084/springai/v1/memory/chats/demo-2 \
+  -H "Content-Type: application/json" -d '{"prompt":"My name is Dilip and I drive a blue Tesla"}'
+
+for p in "What is 2 plus 2?" "What is the capital of France?" "Name a primary colour" \
+         "What is 10 divided by 5?" "Spell the word cat"; do
+  curl -s -X POST http://localhost:8084/springai/v1/memory/chats/demo-2 \
+    -H "Content-Type: application/json" -d "{\"prompt\":\"$p\"}"; echo
+done
+
+# look at the window: ten messages, and the first Turn is gone
+curl -s http://localhost:8084/springai/v1/memory/chats/demo-2 | jq -r '.[] | "\(.type): \(.text)"'
+```
+
+<details>
+<summary><strong>Windows (PowerShell)</strong> — same thing, no <code>jq</code> or bash needed</summary>
+
+The `for p in ...; do ... done` loop is bash-only, and passing JSON through quotes is the usual Windows headache. Using
+PowerShell's own HTTP client avoids both: `ConvertTo-Json` does the escaping, and the response comes back already
+parsed, so `jq` is not needed.
+
+```powershell
+$base = "http://localhost:8084/springai/v1/memory/chats/demo-2"
+
+# state the fact
+Invoke-RestMethod -Method Post -Uri $base -ContentType "application/json" `
+  -Body '{"prompt":"My name is Dilip and I drive a blue Tesla"}'
+
+# five neutral turns
+"What is 2 plus 2?", "What is the capital of France?", "Name a primary colour",
+"What is 10 divided by 5?", "Spell the word cat" | ForEach-Object {
+    Invoke-RestMethod -Method Post -Uri $base -ContentType "application/json" `
+      -Body (@{ prompt = $_ } | ConvertTo-Json -Compress)
+}
+
+# look at the window: ten messages, and the first Turn is gone
+Invoke-RestMethod -Uri $base | ForEach-Object { "$($_.type): $($_.text)" }
+
+# and the question that can no longer be answered
+Invoke-RestMethod -Method Post -Uri $base -ContentType "application/json" `
+  -Body '{"prompt":"What car do I drive?"}'
+```
+
+Notes for Windows users:
+
+- The backtick `` ` `` is PowerShell's line continuation, not `\`.
+- `@{ prompt = $_ } | ConvertTo-Json -Compress` builds the JSON body properly, so no quote escaping is needed for
+  prompts containing apostrophes or punctuation.
+- If you prefer `curl`, call it as **`curl.exe`**. Plain `curl` in PowerShell 5.1 is an alias for `Invoke-WebRequest`,
+  which does not understand `-X` or `-d` and will fail confusingly.
+
+</details>
+
+```text
+USER: What is 2 plus 2?
+ASSISTANT: 2 plus 2 is 4.
+USER: What is the capital of France?
+ASSISTANT: The capital of France is Paris.
+USER: Name a primary colour
+ASSISTANT: Red.
+USER: What is 10 divided by 5?
+ASSISTANT: 10 divided by 5 is 2.
+USER: Spell the word cat
+ASSISTANT: C-A-T.
+```
+
+The Tesla is nowhere in that list, so the next question cannot be answered:
+
+```shell
+curl -X POST http://localhost:8084/springai/v1/memory/chats/demo-2 \
+  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}'
+# -> I don't know what car you drive.
+```
+
+Nothing failed and nothing errored. The window did exactly what it is supposed to do, and the fact fell off the end.
+
+> **Why the filler turns must be neutral.** Try the same demo with chatty filler like *"I live in Dallas"* and it will
+> keep answering correctly, which looks like a broken demo. The reason is visible in the window: the assistant replies
+> *"Got it, Dilip — you drive a blue Tesla"*, so the fact **re-enters** the window inside its own answers and survives
+> long after the original Turn was evicted. Neutral questions give the model no reason to repeat it. This is worth
+> showing on purpose — it is the difference between a fact being *in memory* and a fact being *reachable*.
+
 ---
 
 ## Persistent Chat Memory with JDBC (Postgres)
@@ -517,9 +646,144 @@ Instant createdAt = (Instant) message.getMetadata().get(JdbcChatMemoryRepository
 
 - Supported databases (dialect is auto-detected from the `DataSource`): PostgreSQL, MySQL, MariaDB, SQL Server, Oracle, HSQLDB, H2, SQLite.
 
-### Configuring it manually
+### Testing it: success, restart, then eviction
 
-Only needed if you want a different dialect, `JdbcTemplate`, or window size than the auto-configuration gives you:
+**Success — inside the window.** Identical to `v1`, except the window here is **40 messages** (twenty Turns), set by
+[`ChatMemoryConfig`](src/main/java/com/llm/config/ChatMemoryConfig.java) — Spring AI's own default is 20:
+
+```shell
+curl -X POST http://localhost:8084/springai/v2/memory/chats/jdbc-1 \
+  -H "Content-Type: application/json" -d '{"prompt":"My name is Dilip and I drive a blue Tesla"}'
+# -> Nice to meet you, Dilip! A blue Tesla sounds great.
+
+curl -X POST http://localhost:8084/springai/v2/memory/chats/jdbc-1 \
+  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}'
+# -> You drive a blue Tesla.
+```
+
+The conversation is in Postgres, not the heap, so you can look at it:
+
+```sql
+SELECT conversation_id, type, content, sequence_id
+FROM SPRING_AI_CHAT_MEMORY WHERE conversation_id = 'jdbc-1' ORDER BY sequence_id;
+```
+
+```shell
+# which conversations does the database know about?
+curl -s http://localhost:8084/springai/v2/memory/conversations | jq
+# -> [ "jdbc-1" ]
+```
+
+**Survives a restart — the reason this endpoint exists.** Stop the app with `Ctrl+C`, start it again, then ask without
+re-stating anything:
+
+```shell
+./gradlew :chat-memory:bootRun        # after stopping it
+
+curl -X POST http://localhost:8084/springai/v2/memory/chats/jdbc-1 \
+  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}'
+# -> You drive a blue Tesla.          <-- the same question against v1 would fail here
+```
+
+Run the same restart against `v1` and the answer is gone: its `ConcurrentHashMap` died with the JVM.
+
+**Failure — eviction still happens, and it deletes rows.** Forty messages is twenty Turns, so a twenty-first Turn
+pushes the first one out. That is a lot of curl calls, so either run the loop below with more filler, or set
+`chat-memory.window.max-messages: 6` in `application.yml` and the same demo needs only four Turns. Watch the row count
+rather than the answers:
+
+```shell
+curl -s -X POST http://localhost:8084/springai/v2/memory/chats/jdbc-2 \
+  -H "Content-Type: application/json" -d '{"prompt":"My name is Dilip and I drive a blue Tesla"}'
+
+for p in "What is 2 plus 2?" "Capital of France?" "Name a primary colour" "What is 10 divided by 5?" \
+         "Spell cat" "What is 3 times 3?" "Capital of Japan?" "Name a day of the week" \
+         "What is 100 minus 1?" "Spell dog"; do
+  curl -s -o /dev/null -X POST http://localhost:8084/springai/v2/memory/chats/jdbc-2 \
+    -H "Content-Type: application/json" -d "{\"prompt\":\"$p\"}"
+done
+```
+
+```sql
+-- after turn 1
+SELECT count(*) FROM SPRING_AI_CHAT_MEMORY WHERE conversation_id = 'jdbc-2';   -- 2
+
+-- after turn 11, with max-messages = 40: nothing dropped yet
+SELECT count(*) FROM SPRING_AI_CHAT_MEMORY WHERE conversation_id = 'jdbc-2';   -- 22
+SELECT count(*) FROM SPRING_AI_CHAT_MEMORY
+WHERE conversation_id = 'jdbc-2' AND content ILIKE '%tesla%';                  -- still there
+
+-- once the window is exceeded: capped, not grown, and the evicted Turn is DELETED
+SELECT count(*) FROM SPRING_AI_CHAT_MEMORY WHERE conversation_id = 'jdbc-2';   -- 40
+SELECT count(*) FROM SPRING_AI_CHAT_MEMORY
+WHERE conversation_id = 'jdbc-2' AND content ILIKE '%tesla%';                  -- 0
+```
+
+```shell
+curl -X POST http://localhost:8084/springai/v2/memory/chats/jdbc-2 \
+  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}'
+# -> I don't know what car you drive.
+```
+
+> **This is the most important thing to show in this section.** Persistence is not history. The table never exceeds
+> `max-messages` rows, and the evicted Turn is **`DELETE`d from Postgres** — `MessageWindowChatMemory` trims the repository
+> itself, so the database holds the *window*, not the conversation. Students reasonably assume "it is in a database, so
+> it is kept"; these three `count(*)` queries are the fastest way to show that it is not. If you want an archive, you
+> have to write one — which is what [Long-Term Memory](docs/long-term-memory.md) does with its `chat_history` table.
+
+> **Neutral filler again.** As in `v1`, chatty filler like *"I live in Dallas"* makes the assistant reply *"Got it,
+> Dilip — you drive a blue Tesla"*, which puts the fact back into the window and stops the demo failing. Arithmetic and
+> trivia give it no reason to repeat anything.
+
+### Widening the window — `ChatMemoryConfig`
+
+Spring AI's default window is **20 messages**, and **there is no property to change it**:
+`ChatMemoryAutoConfiguration` declares
+
+```java
+@Bean
+@ConditionalOnMissingBean
+ChatMemory chatMemory(ChatMemoryRepository repo) {
+    return MessageWindowChatMemory.builder().chatMemoryRepository(repo).build();   // maxMessages = 20
+}
+```
+
+with no configuration class of its own. The `@ConditionalOnMissingBean` is the opening: publish your own `ChatMemory`
+and the auto-configured one backs off. That is what
+[`ChatMemoryConfig`](src/main/java/com/llm/config/ChatMemoryConfig.java) does, taking this module to **40 messages**
+(twenty Turns):
+
+```java
+@Bean
+ChatMemory chatMemory(ChatMemoryRepository chatMemoryRepository,
+        @Value("${chat-memory.window.max-messages:40}") int maxMessages) {
+    return MessageWindowChatMemory.builder()
+            .chatMemoryRepository(chatMemoryRepository)
+            .maxMessages(maxMessages)
+            .build();
+}
+```
+
+Two things to know about that bean:
+
+- **It changes `v2` and `v3`**, the two controllers that inject `ChatMemory`. `v1` and `v6` build their own on
+  purpose — `v1` to keep an in-memory repository while the auto-configured bean is JDBC-backed, `v6` because its window
+  has to consolidate on eviction — so neither is affected.
+- **Messages, not Turns.** Every message in the window is re-sent on every call, so this number multiplies tokens, cost
+  and latency directly. Forty messages is twenty exchanges of context on every single request.
+
+The `@Value` makes it tunable without recompiling, which is handy in a lecture — drop it to `6` and eviction arrives
+after three Turns instead of twenty:
+
+```yaml
+chat-memory:
+  window:
+    max-messages: 6
+```
+
+### Configuring the repository manually
+
+Only needed if you want a different dialect or `JdbcTemplate` than the auto-configuration gives you:
 
 ```java
 @Bean
