@@ -16,12 +16,12 @@ dependencies {
     implementation("org.springframework.ai:spring-ai-starter-model-openai")
 
     //chat memory - persists the conversation using the JdbcChatMemoryRepository
-    implementation("org.springframework.ai:spring-ai-starter-model-chat-memory-repository-jdbc")
-    runtimeOnly 'org.postgresql:postgresql'
+//    implementation("org.springframework.ai:spring-ai-starter-model-chat-memory-repository-jdbc")
+//    runtimeOnly 'org.postgresql:postgresql'
 
     //chat memory - semantic recall with VectorStoreChatMemoryAdvisor (artifact renamed in 2.0: was spring-ai-advisors-vector-store)
-    implementation("org.springframework.ai:spring-ai-vector-store-advisor")
-    implementation("org.springframework.ai:spring-ai-starter-vector-store-pgvector")
+//    implementation("org.springframework.ai:spring-ai-vector-store-advisor")
+//    implementation("org.springframework.ai:spring-ai-starter-vector-store-pgvector")
 
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
 
