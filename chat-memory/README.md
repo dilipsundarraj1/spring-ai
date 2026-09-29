@@ -16,9 +16,13 @@
     - [Clear — `DELETE /v1/memory/chats/{conversationId}`](#clear--delete-v1memorychatsconversationid)
     - [Testing it: success, then eviction](#testing-it-success-then-eviction)
   - [Persistent Chat Memory with JDBC (Postgres)](#persistent-chat-memory-with-jdbc-postgres)
+    - [The advisor flow](#the-advisor-flow)
     - [Dependency — `build.gradle`](#dependency--buildgradle)
     - [Configuration — `application.yml`](#configuration--applicationyml)
     - [The table](#the-table)
+    - [How eviction actually works: delete and rewrite](#how-eviction-actually-works-delete-and-rewrite)
+      - [What `maxMessages` actually governs](#what-maxmessages-actually-governs)
+    - [Cleaning up](#cleaning-up)
     - [Testing it: success, restart, then eviction](#testing-it-success-restart-then-eviction)
     - [Widening the window — `ChatMemoryConfig`](#widening-the-window--chatmemoryconfig)
     - [Configuring the repository manually](#configuring-the-repository-manually)
@@ -559,10 +563,10 @@ The conversation is stored in a relational database, so it **survives restarts**
 ```mermaid
 flowchart LR
     subgraph I1["App instance 1"]
-        A1["ChatClient<br/>+ MessageChatMemoryAdvisor"] --> M1["ChatMemory — auto-configured<br/>last 20 messages"]
+        A1["ChatClient<br/>+ MessageChatMemoryAdvisor"] --> M1["ChatMemory<br/>last 40 messages"]
     end
     subgraph I2["App instance 2 — or instance 1 after a restart"]
-        A2["ChatClient<br/>+ MessageChatMemoryAdvisor"] --> M2["ChatMemory — auto-configured<br/>last 20 messages"]
+        A2["ChatClient<br/>+ MessageChatMemoryAdvisor"] --> M2["ChatMemory<br/>last 40 messages"]
     end
 
     M1 --> R["JdbcChatMemoryRepository"]
@@ -572,6 +576,50 @@ flowchart LR
 
 Same advisor, same `ChatMemory` abstraction as the in-memory version — only the repository underneath changed, and
 with it the box the messages actually live in.
+
+### The advisor flow
+
+`MessageChatMemoryAdvisor` wraps every call in two hooks. Nothing in the controller does memory work — it registers the
+advisor and forgets about it:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as ChatClient
+    participant A as MessageChatMemoryAdvisor
+    participant M as ChatMemory<br/>(MessageWindowChatMemory)
+    participant R as JdbcChatMemoryRepository
+    participant L as LLM
+
+    C->>A: prompt + conversationId
+
+    rect rgb(232, 244, 234)
+        Note over A,R: before() — recall, then record the question
+        A->>M: get(conversationId)
+        M->>R: read the window
+        R-->>M: the kept messages
+        M-->>A: oldest → newest
+        Note over A: prepends them to the prompt
+        A->>M: add(conversationId, UserMessage)
+        M->>R: rewrite the window
+    end
+
+    A->>L: replayed window + the new question
+    L-->>A: the answer
+
+    rect rgb(253, 246, 227)
+        Note over A,R: after() — record the answer
+        A->>M: add(conversationId, AssistantMessage)
+        M->>R: rewrite the window
+    end
+
+    A-->>C: the answer
+```
+
+The only thing that differs from `v1` is the bottom of that stack. `v1`'s repository is a `ConcurrentHashMap`, so
+`get` and `add` are map operations; here every one of them is a **database round trip**. What "rewrite the window"
+actually means in SQL is the subject of
+[How eviction actually works](#how-eviction-actually-works-delete-and-rewrite).
 
 ### Dependency — `build.gradle`
 
@@ -633,6 +681,32 @@ CREATE TABLE IF NOT EXISTS SPRING_AI_CHAT_MEMORY (
 );
 ```
 
+**Yes — Spring AI's autoconfiguration creates it, and nothing else does.** You write no DDL, add no Flyway migration
+and call no initialiser. `JdbcChatMemoryRepositoryAutoConfiguration`, activated by the starter, contributes two beans:
+
+```java
+@ConditionalOnClass({ JdbcChatMemoryRepository.class, DataSource.class, JdbcTemplate.class })
+public class JdbcChatMemoryRepositoryAutoConfiguration {
+
+    @Bean @ConditionalOnMissingBean
+    JdbcChatMemoryRepository ...                              // the repository
+
+    @Bean @ConditionalOnMissingBean
+    @Conditional(OnJdbcChatMemoryRepositoryDatasourceInitializationCondition.class)
+    JdbcChatMemoryRepositorySchemaInitializer ...             // the table
+}
+```
+
+Make a couple of calls against the same `conversationId`:
+
+```shell
+curl -X POST http://localhost:8084/springai/v2/memory/chats/jdbc-1 \
+  -H "Content-Type: application/json" -d '{"prompt":"My name is Dilip and I drive a blue Tesla"}'
+
+curl -X POST http://localhost:8084/springai/v2/memory/chats/jdbc-1 \
+  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}'
+```
+
 Look at it after a couple of calls:
 
 ```sql
@@ -641,7 +715,19 @@ FROM SPRING_AI_CHAT_MEMORY
 ORDER BY conversation_id, sequence_id;
 ```
 
-- Messages come back oldest → newest, ordered by `sequence_id`.
+```text
+ conversation_id |   type    |                 content                  | sequence_id
+-----------------+-----------+------------------------------------------+-------------
+ jdbc-1          | USER      | My name is Dilip and I drive a blue Tesl |           0
+ jdbc-1          | ASSISTANT | Nice to meet you, Dilip! I'll keep in mi |           1
+ jdbc-1          | USER      | What car do I drive?                     |           2
+ jdbc-1          | ASSISTANT | You drive a blue Tesla.                  |           3
+```
+
+Two Turns, four rows — the question and the answer are both stored, which is what makes the *next* call able to answer
+from history rather than from the prompt alone.
+
+- Messages come back oldest → newest, ordered by `sequence_id` — but see below: it is a *position*, not an id.
 - Each message's timestamp is available in its metadata:
 
 ```java
@@ -649,6 +735,193 @@ Instant createdAt = (Instant) message.getMetadata().get(JdbcChatMemoryRepository
 ```
 
 - Supported databases (dialect is auto-detected from the `DataSource`): PostgreSQL, MySQL, MariaDB, SQL Server, Oracle, HSQLDB, H2, SQLite.
+
+### How eviction actually works: delete and rewrite
+
+Does the conversation get deleted once it passes `maxMessages`? **Yes — and not just the overflow. The entire
+conversation is deleted and rewritten on every single turn.**
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as curl
+    participant C as ChatClient
+    participant A as MessageChatMemoryAdvisor
+    participant W as MessageWindowChatMemory
+    participant R as JdbcChatMemoryRepository
+    participant P as Postgres
+    participant L as LLM
+
+    U->>C: POST /v2/memory/chats/jdbc-1
+    C->>A: before(request)
+
+    rect rgb(232, 244, 234)
+        Note over A,P: 1 · pull the previous conversation back out of Postgres
+        A->>W: get(conversationId)
+        W->>R: findByConversationId(id)
+        R->>P: SELECT ... WHERE conversation_id = ? ORDER BY sequence_id
+        P-->>R: the rows currently kept
+        R-->>W: the existing window
+        W-->>A: oldest → newest
+        Note over A: prepends them to the prompt,<br/>which is how the model "remembers"
+    end
+
+    rect rgb(253, 246, 227)
+        Note over A,P: 2 · store the new user message — read, trim, rewrite
+        A->>W: add(id, UserMessage)
+        W->>R: findByConversationId(id)
+        R->>P: SELECT ... (again)
+        Note over W: appends, then trims IN MEMORY —<br/>drops the oldest complete Turn<br/>if the list exceeds maxMessages
+        W->>R: saveAll(id, trimmedList)
+        R->>P: DELETE FROM SPRING_AI_CHAT_MEMORY WHERE conversation_id = ?
+        R->>P: INSERT ... batch, sequence_id renumbered from 0
+    end
+
+    A->>L: system + replayed window + the new question
+    L-->>A: the answer
+
+    rect rgb(253, 246, 227)
+        Note over A,P: 3 · store the assistant reply — the identical cycle again
+        A->>W: add(id, AssistantMessage)
+        W->>R: findByConversationId(id)
+        R->>P: SELECT ...
+        W->>R: saveAll(id, trimmedList)
+        R->>P: DELETE ... then INSERT ... batch
+    end
+
+    A-->>C: the answer
+    C-->>U: the answer
+    Note over P: the evicted Turn was never re-inserted —<br/>no tombstone, nothing to recover
+```
+
+**Read that as three Postgres visits, not one.** A single `/v2` request issues **3 `SELECT`s, 2 `DELETE`s and 2 batch
+`INSERT`s**: the advisor reads the window once to build the prompt, and then each of its two `add(...)` calls reads it
+again before replacing it wholesale. Eviction is not a separate step anywhere in that picture — it is just the trimmed
+list being shorter than what was deleted.
+
+`MessageWindowChatMemory` trims the list in memory and hands the survivors to the repository, whose only write
+operation is a wholesale replace:
+
+```java
+// JdbcChatMemoryRepository.saveAll(...)
+this.transactionTemplate.executeWithoutResult(status -> {
+    deleteByConversationId(conversationId);          // the whole conversation
+    this.jdbcTemplate.batchUpdate(insertSql, ...);   // then the trimmed window back
+});
+```
+
+Messages past the window are simply never re-inserted. There is no tombstone and no soft-delete flag — nothing
+recovers them.
+
+The `sequence_id` column proves it. After eleven Turns against a twenty-message window:
+
+```sql
+SELECT conversation_id, count(*), min(sequence_id), max(sequence_id)
+FROM SPRING_AI_CHAT_MEMORY GROUP BY conversation_id;
+```
+
+```text
+ conversation_id | count | min_seq | max_seq
+-----------------+-------+---------+---------
+ jdbc-2          |    20 |       0 |      19
+```
+
+Twenty-two messages were written, twenty remain — numbered **0–19**. Had eviction deleted individual rows, the
+survivors would still be numbered 2–21. They were renumbered from zero, which only happens on a full rewrite.
+
+#### What `maxMessages` actually governs
+
+`maxMessages` is not a database constraint and not a `LIMIT` — it is a number `MessageWindowChatMemory` applies to a
+Java list, in memory, before the rewrite. The rules (the full algorithm is in
+[MessageWindowChatMemory](#messagewindowchatmemory)):
+
+1. Read the current window, append the incoming message.
+2. If the result is within `maxMessages`, save it back unchanged. **No eviction, but still a full delete-and-insert.**
+3. If it is over, compute `overflow = size - maxMessages` and cut that many from the **front**.
+4. **Snap the cut forward to the next `UserMessage`**, so a Turn is never split — an assistant reply is never kept
+   without the question that produced it. This is why the window often lands *below* `maxMessages`.
+5. `SystemMessage`s are never cut, but they **do** count toward the budget.
+6. Whatever survives is written back with `sequence_id` renumbered from 0.
+
+With this module's `max-messages: 40` — twenty Turns — the twenty-first Turn is the first one that evicts:
+
+| | before the `add` | after the rewrite |
+|---|---|---|
+| rows in `SPRING_AI_CHAT_MEMORY` | 40 | 40 |
+| `sequence_id` range | 0–39 | 0–39 |
+| the oldest Turn | present | **deleted, not renumbered — gone** |
+| messages written to the table | — | all 40, again |
+
+The row count and the `sequence_id` range are *identical* before and after, which is exactly why eviction is invisible
+unless you look at the content. Turn 21 did not append two rows; it deleted forty and inserted forty, two of which are
+new and two of which no longer exist anywhere.
+
+Four consequences:
+
+- **Write amplification scales with the window, not the turn.** Each turn is *N* deletes plus *N* inserts, not two
+  inserts. With `max-messages: 40` that is up to forty rows rewritten per turn — and twice per request, because the
+  advisor calls `add(...)` before the model call and again after.
+- **`sequence_id` is a position, not an identity.** It is the index within the *current* window, reassigned on every
+  rewrite. Never use it as a stable message id, a cursor, or a global counter.
+- **Atomic, but not concurrency-safe.** The delete-and-insert is transactional, so you never see a half-written
+  conversation. But two simultaneous requests on the same `conversationId` each read the window, each compute their own
+  trimmed list, and each write — last writer wins and the other's messages vanish. Fine with one caller per
+  conversation; a real lost-update hazard under load.
+- **This is why an archive has to live somewhere else.** You cannot keep history on this path: the repository's only
+  write is "replace everything". It is the reason [Long-Term Memory](docs/long-term-memory.md) adds its own
+  `chat_history` table rather than reusing this one.
+
+### Cleaning up
+
+Open a shell on the Postgres container first:
+
+```shell
+docker exec -it spring-ai-pgvector-1 psql -U admin -d docs
+```
+
+**See what is there** before deleting anything:
+
+```sql
+SELECT conversation_id, count(*) FROM SPRING_AI_CHAT_MEMORY GROUP BY 1 ORDER BY 2 DESC;
+```
+
+**One conversation.** Prefer the endpoint — it goes through `ChatMemory.clear(...)`, which is the same path the
+application would use:
+
+```shell
+curl -i -X DELETE http://localhost:8084/springai/v2/memory/chats/jdbc-1
+# -> 204 No Content
+```
+
+or the equivalent in SQL:
+
+```sql
+DELETE FROM SPRING_AI_CHAT_MEMORY WHERE conversation_id = 'jdbc-1';
+```
+
+**Every conversation** — a clean slate for the next demo:
+
+```sql
+DELETE FROM SPRING_AI_CHAT_MEMORY;            -- or, faster and non-transactional:
+TRUNCATE TABLE SPRING_AI_CHAT_MEMORY;
+```
+
+**The table itself**, if you want to watch it be created again:
+
+```sql
+DROP TABLE SPRING_AI_CHAT_MEMORY;
+```
+
+Restart the app and it comes back — but **only because this module sets `initialize-schema: always`**. On the default
+`embedded` setting, Postgres is not an embedded database, the table is never recreated, and the next call fails with a
+missing-relation error. Dropping the table is the fastest way to prove that property to yourself.
+
+> **No restart needed for the row deletions.** `v2` keeps nothing in the JVM — every `ChatMemory.get(...)` reads
+> Postgres — so deleting rows takes effect on the very next call. That is not true of `v1`, whose window lives in the
+> heap, or of `v6`, which needs `DELETE /v6/memory/users/{userId}` to clear its in-memory window as well as its tables.
+
+> **The other memory tables in this database.** `chat_memory_vector_store` holds `v4` / `v5` memory, and
+> `chat_memory_long_term` plus `chat_history` hold `v6`'s. Wiping `SPRING_AI_CHAT_MEMORY` leaves all of those untouched.
 
 ### Testing it: success, restart, then eviction
 
