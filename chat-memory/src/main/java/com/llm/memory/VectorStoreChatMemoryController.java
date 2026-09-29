@@ -1,6 +1,6 @@
 package com.llm.memory;
 
-import com.llm.dto.ChatMessage;
+import com.llm.dto.ScoredMessage;
 import com.llm.dto.UserInput;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
@@ -94,9 +94,9 @@ public class VectorStoreChatMemoryController {
      * similarity search, run by hand.
      */
     @GetMapping("/v4/memory/chats/{conversationId}")
-    public List<ChatMessage> recall(@PathVariable String conversationId,
-                                    @RequestParam String query,
-                                    @RequestParam(defaultValue = "" + TOP_K) int topK) {
+    public List<ScoredMessage> recall(@PathVariable String conversationId,
+                                     @RequestParam String query,
+                                     @RequestParam(defaultValue = "" + TOP_K) int topK) {
         var searchRequest = SearchRequest.builder()
                 .query(query)
                 .topK(topK)
@@ -107,10 +107,9 @@ public class VectorStoreChatMemoryController {
         if (documents == null) {
             return List.of();
         }
+        // score and distance are the same measurement inverted - see ScoredMessage
         return documents.stream()
-                .map(document -> new ChatMessage(
-                        String.valueOf(document.getMetadata().getOrDefault(MESSAGE_TYPE_METADATA, "UNKNOWN")),
-                        document.getText()))
+                .map(document -> ScoredMessage.from(document, MESSAGE_TYPE_METADATA))
                 .toList();
     }
 

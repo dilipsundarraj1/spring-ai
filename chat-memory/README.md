@@ -23,6 +23,8 @@
     - [Widening the window — `ChatMemoryConfig`](#widening-the-window--chatmemoryconfig)
     - [Configuring the repository manually](#configuring-the-repository-manually)
   - [Chat Memory with ChatModel (no advisor)](#chat-memory-with-chatmodel-no-advisor)
+    - [Why you would do this](#why-you-would-do-this)
+    - [Drawbacks](#drawbacks)
   - [Semantic Chat Memory with a Vector Store](#semantic-chat-memory-with-a-vector-store)
     - [How it differs from `MessageChatMemoryAdvisor`](#how-it-differs-from-messagechatmemoryadvisor)
     - [What the advisor does on each call](#what-the-advisor-does-on-each-call)
@@ -31,8 +33,10 @@
     - [Configuration — `application.yml`](#configuration--applicationyml-1)
     - [Setting up the controller](#setting-up-the-controller-1)
     - [Chat — `POST /v4/memory/chats/{conversationId}`](#chat--post-v4memorychatsconversationid)
+      - [Where the embedding actually happens](#where-the-embedding-actually-happens)
     - [Recall — `GET /v4/memory/chats/{conversationId}?query=...`](#recall--get-v4memorychatsconversationidquery)
     - [Clear — `DELETE /v4/memory/chats/{conversationId}`](#clear--delete-v4memorychatsconversationid)
+    - [Testing it: what semantic recall gets right, and what it does not](#testing-it-what-semantic-recall-gets-right-and-what-it-does-not)
     - [Trade-offs](#trade-offs)
   - [Taking Control: Semantic Memory Without the Advisor](#taking-control-semantic-memory-without-the-advisor)
     - [The three steps the advisor was doing for you](#the-three-steps-the-advisor-was-doing-for-you)
@@ -839,6 +843,45 @@ sequenceDiagram
 Compare it with [How the advisor works](#how-the-advisor-works): the steps are identical — the only difference is who
 writes them.
 
+### Why you would do this
+
+- **To understand advisors.** This is the reason it is in the course. Once you have written those three lines, a
+  `MessageChatMemoryAdvisor` stops being magic: it is a `before` hook that prepends `chatMemory.get(...)` and an `after`
+  hook that calls `chatMemory.add(...)`.
+- **You need the raw `ChatResponse`.** `chatClient...call().content()` hands back a `String`. `chatModel.call(prompt)`
+  returns the whole response — token usage, finish reason, all generations. If you are metering cost per conversation or
+  logging why a completion stopped, this is the shorter path.
+- **You need control of the exact message list.** The advisor assembles the prompt one fixed way. Here you decide: drop
+  messages matching a rule, redact before sending, reorder, inject a synthetic message, summarise the older half.
+- **Your memory policy does not fit the abstraction.** Writing to two stores, persisting only messages that pass a
+  filter, or recording something extra alongside each message — all trivial here, all awkward inside an advisor.
+- **There is no advisor chain to reason about.** With several advisors, ordering effects are real (see how the vector
+  advisor *replaces* your system message). One method with three statements has no such surprises.
+
+### Drawbacks
+
+- **You own the bookkeeping, and forgetting it fails silently.** Omit step 3 and memory simply stops growing. Nothing
+  throws; the model just appears to forget, which is a genuinely unpleasant bug to chase.
+- **Ordering is yours to get wrong.** The user message must be stored *before* the call and the assistant message
+  *after*. Store the user message twice and the model sees the question duplicated; store it after and it never sees it
+  at all.
+- **A failed call poisons memory.** If `chatModel.call(...)` throws, the user message is already in the store — so
+  memory now holds a question with no answer, and it will be replayed on every future call in that conversation. The
+  advisor path has the same hazard; the difference is that here it is visibly your problem to handle.
+- **You lose everything else advisors give you**, not just memory: `SimpleLoggerAdvisor`'s `DEBUG` dump of the exact
+  prompt, `QuestionAnswerAdvisor` for RAG, `SafeGuardAdvisor`, and `ChatClient`'s `.entity(...)` structured-output
+  binding — with a bare `ChatModel` you parse the text yourself.
+- **Tool calling is a dead end on this path.** The supported tool loop is `ToolCallingAdvisor`, which exists only on the
+  `ChatClient` side. `OpenAiChatModel`'s own internal tool execution is **deprecated since 2.0.0 and removed in 3.0.0**
+  — its javadoc says so outright: *"internal tool execution in OpenAiChatModel is superseded by ToolCallingAdvisor used
+  via ChatClient"*. If your endpoint needs tools, it needs a `ChatClient`.
+- **It does not scale across controllers.** Three lines per endpoint is fine; the same three lines in fifteen endpoints
+  is the duplication advisors exist to remove — and each copy is a place to thread `conversationId` incorrectly and
+  leak one user's history into another's prompt.
+
+**Rule of thumb:** use `ChatClient` and an advisor unless you need the raw `ChatResponse` or control of the exact
+message list. Reach for `ChatModel` deliberately, not by default.
+
 ## Semantic Chat Memory with a Vector Store
 
 **Endpoint:** `POST /v4/memory/chats/{conversationId}` — [`VectorStoreChatMemoryController`](src/main/java/com/llm/memory/VectorStoreChatMemoryController.java)
@@ -860,6 +903,15 @@ recall is driven by meaning, not by recency.
 | Forgetting | Oldest turns evicted at `maxMessages` | Nothing is ever evicted |
 | Cost per call | None beyond the tokens | One embedding of the question, plus embeddings on write |
 | Conversation order | Preserved | Lost — results come back by similarity score |
+
+> ### 📖 **Spring AI reference**
+>
+> **[`VectorStoreChatMemoryAdvisor` — Spring AI docs](https://docs.spring.io/spring-ai/reference/api/chat-memory.html#_vectorstorechatmemoryadvisor)**
+>
+> It sits under *Memory in Chat Client* on the **[Chat Memory](https://docs.spring.io/spring-ai/reference/api/chat-memory.html)**
+> page, alongside `MessageChatMemoryAdvisor`. The official section is short — it covers what the advisor does and how to
+> supply a custom `PromptTemplate` with the `instructions` and `long_term_memory` placeholders — and it does **not**
+> mention the `spring-ai-vector-store-advisor` dependency you need, which is [below](#dependencies--buildgradle).
 
 > **It does not use `ChatMemory` at all.** The advisor takes a `VectorStore` and writes to it itself, so none of the
 > `spring.ai.chat.memory.*` properties, no `MessageWindowChatMemory`, and no `ChatMemoryRepository` are involved on
@@ -1078,6 +1130,48 @@ curl -X POST "http://localhost:8084/springai/v4/memory/chats/user-1?topK=2" \
   -H "Content-Type: application/json" -d '{"prompt":"What do you know about me?"}'
 ```
 
+#### Where the embedding actually happens
+
+**The advisor never embeds anything.** It builds plain-text `Document`s and hands them over; the `VectorStore` does the
+conversion. Traced through the 2.0.0 source:
+
+```text
+VectorStoreChatMemoryAdvisor.before() / after()
+  └─ toDocuments(...)            Document.builder().text(...).metadata(...).build()   ← no embedding set
+  └─ vectorStore.write(docs)
+       └─ DocumentWriter.write        → accept(docs)
+            └─ VectorStore.accept     → add(docs)
+                 └─ AbstractObservationVectorStore.add        (wraps it in an observation span)
+                      └─ PgVectorStore.doAdd(docs)
+                           ├─ embeddingModel.embed(documents, EmbeddingOptions, batchingStrategy)   ← the API call
+                           └─ INSERT INTO chat_memory_vector_store (id, content, metadata, embedding)
+                                ON CONFLICT (id) DO UPDATE ...
+```
+
+Five things follow from that chain:
+
+- **Only the text is embedded — never the metadata.** `EmbeddingModel.getEmbeddingContent(document)` returns
+  `document.getText()` and nothing more. `conversationId` and `messageType` are stored as JSON and are *filterable*, but
+  they contribute nothing to the vector. This is a direct cause of the score compression measured later: a `USER`
+  question and its `ASSISTANT` answer are embedded as bare sentences, with no hint that one is a question and the other
+  a reply.
+- **Batching runs even for a single message.** `embed(...)` calls `batchingStrategy.batch(documents)` first. The default
+  `TokenCountBatchingStrategy` counts CL100K tokens against a cap of `8191` with a 10% reserve, and each batch becomes
+  one `EmbeddingRequest` — so a large write becomes several API calls rather than one oversized one.
+- **Two embedding calls per turn, unavoidably.** `before()` writes the user message and `after()` writes the assistant
+  message, as separate `write(...)` invocations. They cannot batch together, which is where the per-turn embedding cost
+  comes from.
+- **The vector lands in the same statement as the row.** `doAdd` computes every embedding first, then does one
+  `batchUpdate` insert with the `PGvector` as a bind parameter. `ON CONFLICT (id) DO UPDATE` means re-adding the same id
+  re-embeds and overwrites — though the advisor never reuses ids, so in practice it only ever inserts.
+- **The column width comes from the model.** At startup `PgVectorStore` calls `embeddingModel.dimensions()` to size
+  `vector(N)` — that is why the table is `vector(1536)`, and why changing
+  `spring.ai.openai.embedding.options.model` invalidates every row already stored.
+
+> **The embedding model is never named anywhere near the advisor.** It is whichever `EmbeddingModel` bean the
+> `VectorStore` was built with — here the auto-configured OpenAI one, pinned to `text-embedding-3-small` in
+> `application.yml`. Swap that bean and every memory path in this module changes behaviour at once, including v5 and v6.
+
 ### Recall — `GET /v4/memory/chats/{conversationId}?query=...`
 
 Runs the *same* similarity search the advisor runs, so you can see exactly what would be recalled for a question
@@ -1094,15 +1188,45 @@ List<Document> documents = vectorStore.similaritySearch(searchRequest);
 ```
 
 ```shell
-curl -G http://localhost:8084/springai/v4/memory/chats/user-1 --data-urlencode "query=What car do I drive?"
+curl -G http://localhost:8084/springai/v4/memory/chats/user-1 \
+  --data-urlencode "query=What car do I drive?" --data-urlencode "topK=3" | jq
 ```
 
 ```json
 [
-  { "type": "USER",      "text": "My name is Dilip and I drive a blue Tesla" },
-  { "type": "ASSISTANT", "text": "Nice to meet you, Dilip! A blue Tesla is a great car." }
+  {
+    "type": "USER",
+    "text": "My name is Dilip and I drive a blue Tesla",
+    "score": 0.7916143238544464,
+    "distance": 0.2083856761455536
+  },
+  {
+    "type": "ASSISTANT",
+    "text": "Nice to meet you, Dilip! I’ll remember that you drive a blue Tesla.",
+    "score": 0.7536427080631256,
+    "distance": 0.2463572919368744
+  },
+  {
+    "type": "USER",
+    "text": "I work as a software architect",
+    "score": 0.7292972505092621,
+    "distance": 0.2707027494907379
+  }
 ]
 ```
+
+**`score` and `distance` are one measurement, inverted.** `PgVectorStore` runs the cosine distance operator
+(`embedding <=> query`) and sets `score = 1.0 - distance` — add any pair above and you get exactly `1.0`:
+
+| | 0.0 means | 1.0 means | Used by |
+|---|---|---|---|
+| `distance` | identical | unrelated-ish | the index — it is what `ORDER BY` sorts on in SQL |
+| `score` | unrelated-ish | identical | the API — it is what `similarityThreshold` compares against |
+
+Both are reported because hand-written SQL deals in **distance** while Spring AI's API deals in **score**, and quietly
+swapping one for the other inverts your filter. Note also how compressed the range is: the *exact* topic scores `0.79`
+and an unrelated sentence still scores `0.73` — barely `0.06` apart. That narrowness is the subject of
+[Testing it](#testing-it-what-semantic-recall-gets-right-and-what-it-does-not).
 
 Note what is **not** here: the joke about databases. It was the most recent exchange, but it isn't relevant to the
 question, so it isn't recalled — the opposite of what `MessageWindowChatMemory` would have done.
@@ -1118,6 +1242,97 @@ vectorStore.delete(new FilterExpressionBuilder().eq("conversationId", conversati
 ```shell
 curl -i -X DELETE http://localhost:8084/springai/v4/memory/chats/user-1
 ```
+
+### Testing it: what semantic recall gets right, and what it does not
+
+Start clean, then plant a fact and bury it under unrelated chatter:
+
+```shell
+curl -s -X DELETE http://localhost:8084/springai/v4/memory/chats/vec-demo
+
+curl -s -X POST http://localhost:8084/springai/v4/memory/chats/vec-demo \
+  -H "Content-Type: application/json" -d '{"prompt":"My name is Dilip and I drive a blue Tesla"}'
+
+for p in "I work as a software architect" "Tell me a joke about databases" \
+         "What is the capital of France?" "Spell cat" "What is 3 times 3?"; do
+  curl -s -o /dev/null -X POST http://localhost:8084/springai/v4/memory/chats/vec-demo \
+    -H "Content-Type: application/json" -d "{\"prompt\":\"$p\"}"
+done
+```
+
+**Positive — recency stops mattering.** Twelve messages are now stored and the Tesla is eleven messages back, so
+`v1`'s ten-message window would have evicted it. Semantic recall does not care:
+
+```shell
+curl -X POST http://localhost:8084/springai/v4/memory/chats/vec-demo \
+  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}'
+# -> You drive a blue Tesla.
+```
+
+That is the whole promise of this advisor, and it delivers. Now the two ways it does not.
+
+**Negative 1 — an unrelated question pulls in everything.** Ask about the weather, a subject that appears nowhere in
+the conversation. `v4`'s own recall endpoint does not report scores, so inspect the same store through `v5`, which does
+— they share `conversationId` and the same table:
+
+```shell
+curl -s -G http://localhost:8084/springai/v5/memory/chats/vec-demo \
+  --data-urlencode "query=Whats the weather?" --data-urlencode "dedupe=false" | jq
+```
+
+```text
+fetched from store: 14   returned: 14
+  0.7593  USER       What is the capital of France?      <-- the "most relevant" hit
+  0.7484  USER       What car do I drive?
+  0.7394  ASSISTANT  The capital of France is Paris.
+  0.7332  USER       Spell cat
+  0.7298  USER       My name is Dilip and I drive a blue Tesla
+  ...
+  0.7010  ASSISTANT  3 times 3 is 9.
+```
+
+So: **no, it does not pull only the relevant ones — it pulls all fourteen.** Every message scores between `0.7010` and
+`0.7593`, a spread of `0.058`, and the top hit for a *weather* question is a question about *France*. Nothing was
+excluded because nothing can be: `topK` is a count, and there is no similarity floor. Ranking inside a band that narrow
+is not a relevance judgement.
+
+**Negative 2 — repeating a question crowds out its own answer.** Every question is stored too, so ask the same thing a
+few times and the store fills with perfect matches that carry no information:
+
+```shell
+# ask it twice more, then look at the top of the results
+curl -s -o /dev/null -X POST http://localhost:8084/springai/v4/memory/chats/vec-demo \
+  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}'
+curl -s -o /dev/null -X POST http://localhost:8084/springai/v4/memory/chats/vec-demo \
+  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}'
+
+curl -s -G http://localhost:8084/springai/v5/memory/chats/vec-demo \
+  --data-urlencode "query=What car do I drive?" --data-urlencode "dedupe=false" \
+  --data-urlencode "topK=4" | jq '.recalled'
+```
+
+```text
+  0.8472  USER  What car do I drive?
+  0.8472  USER  What car do I drive?
+  0.8472  USER  What car do I drive?
+  0.8472  USER  What car do I drive?
+```
+
+Four identical rows at the top, all tied. Narrow the search and the answer never reaches the model:
+
+```shell
+curl -X POST "http://localhost:8084/springai/v4/memory/chats/vec-demo?topK=2" \
+  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}'
+# -> I don't know what car you drive - you haven't told me yet.
+```
+
+The fact is still in the database. The model was simply handed two copies of its own question instead of the answer.
+
+> **The honest summary of this endpoint.** It fixes recency — a fact from two hundred messages ago is reachable, which
+> no window can do. It does **not** give you relevance: with these embeddings, unrelated short messages score within a
+> few hundredths of related ones, so `topK` decides what arrives and meaning barely gets a vote. That is the gap
+> [v5](#taking-control-semantic-memory-without-the-advisor) measures and
+> [Long-Term Memory](docs/long-term-memory.md) is built to close.
 
 ### Trade-offs
 
