@@ -38,11 +38,14 @@
     - [How it differs from `MessageChatMemoryAdvisor`](#how-it-differs-from-messagechatmemoryadvisor)
     - [What the advisor does on each call](#what-the-advisor-does-on-each-call)
     - [Why memory goes into the system message](#why-memory-goes-into-the-system-message)
+    - [Endpoints at a glance](#endpoints-at-a-glance)
     - [Dependencies — `build.gradle`](#dependencies--buildgradle)
     - [Configuration — `application.yml`](#configuration--applicationyml-1)
     - [Setting up the controller](#setting-up-the-controller-1)
     - [Chat — `POST /v4/memory/chats/{conversationId}`](#chat--post-v4memorychatsconversationid)
-      - [Where the embedding actually happens](#where-the-embedding-actually-happens)
+    - [Under the hood: how the advisor uses the VectorStore](#under-the-hood-how-the-advisor-uses-the-vectorstore)
+      - [How conversations are stored](#how-conversations-are-stored)
+      - [How conversations are retrieved](#how-conversations-are-retrieved)
     - [Recall — `GET /v4/memory/chats/{conversationId}?query=...`](#recall--get-v4memorychatsconversationidquery)
     - [Clear — `DELETE /v4/memory/chats/{conversationId}`](#clear--delete-v4memorychatsconversationid)
     - [Testing it: what semantic recall gets right, and what it does not](#testing-it-what-semantic-recall-gets-right-and-what-it-does-not)
@@ -1214,8 +1217,6 @@ message list. Reach for `ChatModel` deliberately, not by default.
 
 ## Semantic Chat Memory with a Vector Store
 
-**Endpoint:** `POST /v4/memory/chats/{conversationId}` — [`VectorStoreChatMemoryController`](src/main/java/com/llm/memory/VectorStoreChatMemoryController.java)
-
 - **Everything so far** replays the **most recent** messages.
 - **`VectorStoreChatMemoryAdvisor`** replays the **most relevant** ones instead:
   - every message is embedded and stored in a vector store;
@@ -1224,6 +1225,17 @@ message list. Reach for `ChatModel` deliberately, not by default.
 
 That fixes the sliding window's blind spot — "My name is Dilip" said 200 messages ago is still retrievable, because
 recall is driven by meaning, not by recency.
+
+> **Compare with the sliding window.** `MessageChatMemoryAdvisor` over `MessageWindowChatMemory` pulls the **last N
+> messages** into the prompt, and the LLM answers from those — so it only knows what is still inside the window.
+> We saw both sides of that earlier:
+>
+> - **Inside the window, it works** — "You drive a blue Tesla." ([`v1`](#testing-it-success-then-eviction),
+>   [`v2`](#testing-it-success-restart-then-eviction))
+> - **Once the fact is evicted, it is gone** — after enough Turns the same question gets "I don't know what car you
+>   drive.", even though the user said it in this very conversation.
+>
+> The vector store asks a different question: not "what was said **last**?" but "what was said that is **relevant**?".
 
 ### How it differs from `MessageChatMemoryAdvisor`
 
@@ -1295,10 +1307,6 @@ Details worth knowing:
 
 ### Why memory goes into the system message
 
-Putting recalled messages in the system prompt instead of replaying them as `UserMessage` / `AssistantMessage` turns
-looks like a downgrade — it throws away the message types Spring AI otherwise cares about. Walking one question
-through the store shows what the advisor is really doing.
-
 Conversation `user-1` has five messages saved. The car was mentioned right at the **start**; the **most recent**
 exchange is an unrelated joke about databases. Now ask *"What car do I drive?"*:
 
@@ -1327,29 +1335,40 @@ flowchart TB
     SYS --> LLM["What the LLM receives<br/>1 SYSTEM message carrying the memory<br/>+ 1 USER turn — the real question"]
 ```
 
-The two recalled messages are **not** put back as a `USER` turn and an `ASSISTANT` turn. They are folded into the
-system message as labelled entries, and the only real turn in the prompt is the question just asked. Five reasons that
-is the right call:
+Compare what each advisor sends to the LLM for this question:
 
-- **Similarity results have no conversational order.** They come back ranked by score, so the top hit may be from
-  message 3 and the next from message 500. Replaying that as turns would hand the model a transcript of a conversation
-  that never happened in that sequence.
-- **A `UserMessage` means "the user is saying this now."** Injecting a fragment from 200 messages ago as a user turn
-  invites the model to answer it instead of the actual question. As system text it is clearly *about* the
-  conversation rather than *part* of it.
-- **Relevance is a guess.** A top-K search always returns K results, even when nothing stored is actually relevant.
-  Labelling them background reference data lets the model discount a weak match; a conversation turn is far harder to
-  ignore.
-- **Nothing accumulates.** There is only ever one system message, re-rendered and replaced on every call, so the
-  prompt stays the same size and there is no bookkeeping to strip turns injected on a previous request.
-- **It is the RAG shape, reused.** `QuestionAnswerAdvisor` injects retrieved documents into the prompt exactly this
-  way. Semantic memory *is* retrieval — the only difference is that the corpus is your own past messages.
+**A — `MessageChatMemoryAdvisor`** replays the window as turns — **everything recent, relevant or not**:
 
-The cost is that user-controlled text ends up inside the system prompt, which is the one place a model treats as
-authoritative. Spring AI mitigates it by convention: entries are XML-escaped, wrapped in typed
-`<memory-entry type="...">` elements, and the template tells the model to treat the block as historical data only. Its
-own javadoc is blunt that this does not eliminate the root cause — so for agents with tool access, prefer
-`MessageChatMemoryAdvisor`, which keeps user content in typed `Message` objects and never rewrites your instructions.
+```text
+USER:      My name is Dilip and I drive a blue Tesla    ← relevant
+ASSISTANT: Nice to meet you, Dilip!                     ← relevant
+USER:      I work as a software architect               ← not relevant, sent anyway
+USER:      Tell me a joke about databases               ← not relevant, sent anyway
+ASSISTANT: Why did the query go to therapy?             ← not relevant, sent anyway
+USER:      What car do I drive?                         ← the real question
+```
+
+**B — `VectorStoreChatMemoryAdvisor`** sends **only what the search recalled**, folded into the system message:
+
+```text
+SYSTEM:    You are a concise personal assistant. ...
+           LONG_TERM_MEMORY:
+           <memory-entry type="user">My name is Dilip and I drive a blue Tesla</memory-entry>   ← recalled
+           <memory-entry type="assistant">Nice to meet you, Dilip!</memory-entry>               ← recalled
+USER:      What car do I drive?                                                              ← the real question
+```
+
+The architect line and the database joke never reach the LLM in **B** — they stay in the vector store.
+
+### Endpoints at a glance
+
+All three live in [`VectorStoreChatMemoryController`](src/main/java/com/llm/memory/VectorStoreChatMemoryController.java):
+
+| Method | Path | What it does |
+|---|---|---|
+| `POST` | `/v4/memory/chats/{conversationId}` | [Chat](#chat--post-v4memorychatsconversationid) with semantic memory (`?topK=` to change recall) |
+| `GET` | `/v4/memory/chats/{conversationId}?query=...` | [Recall](#recall--get-v4memorychatsconversationidquery) — what the similarity search returns for a question, with scores |
+| `DELETE` | `/v4/memory/chats/{conversationId}` | [Clear](#clear--delete-v4memorychatsconversationid) — delete the conversation from the vector store |
 
 ### Dependencies — `build.gradle`
 
@@ -1429,7 +1448,9 @@ public String chat(@RequestBody @Valid UserInput userInput,
 - `ChatMemory.CONVERSATION_ID` is **still required** — the vector advisor reads the same context key, and throws
   `IllegalArgumentException: conversationId cannot be null` without it.
 - `VectorStoreChatMemoryAdvisor.TOP_K` (`chat_memory_vector_store_top_k`) overrides `defaultTopK` for one call —
-  handy for showing how recall changes as you widen the search.
+  handy for showing how recall changes as you widen the search. **The `topK` in effect:**
+  - no `?topK=` → **20**, from `defaultTopK(TOP_K)` in the constructor;
+  - `?topK=3` → **3**, for that call only — the next call without it is back to 20.
 
 ```shell
 curl -X POST http://localhost:8084/springai/v4/memory/chats/user-1 \
@@ -1446,52 +1467,77 @@ curl -X POST http://localhost:8084/springai/v4/memory/chats/user-1 \
 curl -X POST http://localhost:8084/springai/v4/memory/chats/user-1 \
   -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}'
 
+# the same question with only the 3 nearest messages recalled
+curl -X POST "http://localhost:8084/springai/v4/memory/chats/user-1?topK=3" \
+  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}'
+
 # narrow the search for one call, to see recall degrade
 curl -X POST "http://localhost:8084/springai/v4/memory/chats/user-1?topK=2" \
   -H "Content-Type: application/json" -d '{"prompt":"What do you know about me?"}'
 ```
 
-#### Where the embedding actually happens
+### Under the hood: how the advisor uses the VectorStore
 
-**The advisor never embeds anything.** It builds plain-text `Document`s and hands them over; the `VectorStore` does the
-conversion. Traced through the 2.0.0 source:
+The advisor never talks to Postgres or the embedding model itself — every read and write goes through the
+`VectorStore`. Storing happens on both sides of the LLM call; retrieving happens once, before it.
+
+#### How conversations are stored
+
+Each `USER` and `ASSISTANT` message becomes **one row** in `chat_memory_vector_store`. The advisor never embeds
+anything — it hands plain-text `Document`s to the `VectorStore`, and `PgVectorStore` calls the embedding model:
 
 ```text
 VectorStoreChatMemoryAdvisor.before() / after()
-  └─ toDocuments(...)            Document.builder().text(...).metadata(...).build()   ← no embedding set
-  └─ vectorStore.write(docs)
-       └─ DocumentWriter.write        → accept(docs)
-            └─ VectorStore.accept     → add(docs)
-                 └─ AbstractObservationVectorStore.add        (wraps it in an observation span)
-                      └─ PgVectorStore.doAdd(docs)
-                           ├─ embeddingModel.embed(documents, EmbeddingOptions, batchingStrategy)   ← the API call
-                           └─ INSERT INTO chat_memory_vector_store (id, content, metadata, embedding)
-                                ON CONFLICT (id) DO UPDATE ...
+  └─ vectorStore.write(docs)                     Document = text + metadata, no embedding yet
+       └─ PgVectorStore.doAdd(docs)
+            ├─ embeddingModel.embed(...)         ← the embedding API call
+            └─ INSERT INTO chat_memory_vector_store (id, content, metadata, embedding)
 ```
 
-Five things follow from that chain:
+| Column | Holds |
+|---|---|
+| `id` | A random UUID per message |
+| `content` | The message text |
+| `metadata` | JSON: `conversationId`, `messageType` — used for filtering |
+| `embedding` | `vector(1536)` — the embedded `content` |
 
-- **Only the text is embedded — never the metadata.** `EmbeddingModel.getEmbeddingContent(document)` returns
-  `document.getText()` and nothing more. `conversationId` and `messageType` are stored as JSON and are *filterable*, but
-  they contribute nothing to the vector. This is a direct cause of the score compression measured later: a `USER`
-  question and its `ASSISTANT` answer are embedded as bare sentences, with no hint that one is a question and the other
-  a reply.
-- **Batching runs even for a single message.** `embed(...)` calls `batchingStrategy.batch(documents)` first. The default
-  `TokenCountBatchingStrategy` counts CL100K tokens against a cap of `8191` with a 10% reserve, and each batch becomes
-  one `EmbeddingRequest` — so a large write becomes several API calls rather than one oversized one.
-- **Two embedding calls per turn, unavoidably.** `before()` writes the user message and `after()` writes the assistant
-  message, as separate `write(...)` invocations. They cannot batch together, which is where the per-turn embedding cost
-  comes from.
-- **The vector lands in the same statement as the row.** `doAdd` computes every embedding first, then does one
-  `batchUpdate` insert with the `PGvector` as a bind parameter. `ON CONFLICT (id) DO UPDATE` means re-adding the same id
-  re-embeds and overwrites — though the advisor never reuses ids, so in practice it only ever inserts.
-- **The column width comes from the model.** At startup `PgVectorStore` calls `embeddingModel.dimensions()` to size
-  `vector(N)` — that is why the table is `vector(1536)`, and why changing
-  `spring.ai.openai.embedding.options.model` invalidates every row already stored.
+- **Only the text is embedded, never the metadata.** `conversationId` filters results but doesn't affect similarity, and
+  nothing in the vector says whether a message was a question or an answer.
+- **Two embedding calls per Turn.** `before()` writes the user message and `after()` the assistant reply, separately.
+- **The model sets the column width.** `vector(N)` is sized from `embeddingModel.dimensions()` at startup; switching
+  embedding models invalidates every stored row.
+- **The embedding model is whichever `EmbeddingModel` the `VectorStore` was built with** — here the auto-configured
+  OpenAI one. Change it and every vector-backed memory path (`v4`, `v5`, `v6`) changes with it.
 
-> **The embedding model is never named anywhere near the advisor.** It is whichever `EmbeddingModel` bean the
-> `VectorStore` was built with — here the auto-configured OpenAI one, pinned to `text-embedding-3-small` in
-> `application.yml`. Swap that bean and every memory path in this module changes behaviour at once, including v5 and v6.
+#### How conversations are retrieved
+
+In `before()`, **before** the new question is written, the advisor runs one similarity search:
+
+```text
+VectorStoreChatMemoryAdvisor.before()
+  └─ vectorStore.similaritySearch(SearchRequest)   query = the user's question
+                                                   topK  = defaultTopK, or the TOP_K param for this call
+                                                   filter = conversationId == 'user-1'
+       └─ PgVectorStore.doSimilaritySearch(...)
+            ├─ embeddingModel.embed(question)      ← one embedding API call
+            └─ SELECT *, embedding <=> ? AS distance
+                 FROM chat_memory_vector_store
+                 WHERE embedding <=> ? < ?
+                   AND metadata::jsonb @@ '$.conversationId == "user-1"'::jsonpath
+                 ORDER BY distance LIMIT ?          ← topK
+```
+
+- **Only the latest question is the query.** Earlier turns don't shape the search — "What about the other one?"
+  retrieves poorly because it means little on its own.
+- **Nearest first, by cosine distance (`<=>`).** The results arrive ordered by similarity, not by time, and stay in
+  that order in the prompt.
+- **`topK` is the only real limit.** The advisor sets no similarity threshold, so it defaults to `0.0` — the
+  `WHERE ... < ?` becomes `distance < 1`, which lets almost everything through. The `topK` nearest come back however
+  weakly related they are; cutting weak matches is what `v5` does by hand.
+- **`conversationId` is a filter, not part of the match.** It is a JSONPath check on `metadata`, so one conversation
+  never sees another's messages.
+- **The results become text.** Each `Document` is rendered as `<memory-entry type="user|assistant">...</memory-entry>`
+  inside `LONG_TERM_MEMORY` in the system message — see [What the advisor does on each call](#what-the-advisor-does-on-each-call).
 
 ### Recall — `GET /v4/memory/chats/{conversationId}?query=...`
 

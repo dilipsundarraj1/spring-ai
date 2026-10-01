@@ -59,10 +59,9 @@ public class VectorStoreChatMemoryController {
         // The advisor writes into the vector store itself - no ChatMemory / ChatMemoryRepository involved.
         this.chatClient = chatClientBuilder
                 .defaultSystem("""
-                        You are a helpful assistant.
-                        The LONG_TERM_MEMORY section holds facts this user told you earlier in this same
-                        conversation. Treat them as true and answer from them. If the answer is there, use it
-                        instead of replying that you do not know or have no access to the user's data.""")
+                        You are a concise personal assistant. Answer in one short sentence.
+                        Everything under LONG_TERM_MEMORY was told to you by this user earlier - rely on it
+                        and never say you don't know something that appears there.""")
                 .defaultAdvisors(
                         VectorStoreChatMemoryAdvisor.builder(vectorStore)
                                 .defaultTopK(TOP_K)
