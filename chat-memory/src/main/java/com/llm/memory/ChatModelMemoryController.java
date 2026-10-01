@@ -5,7 +5,6 @@ import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.memory.ChatMemory;
-import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.Prompt;
@@ -17,6 +16,10 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * Chat memory managed by hand with the low-level ChatModel API - no advisor involved.
  * This is exactly what the MessageChatMemoryAdvisor does for you behind the scenes.
+ * <p>
+ * The ChatMemory is the auto-configured one from spring-ai-starter-model-chat-memory-repository-jdbc:
+ * a MessageWindowChatMemory (last 20 messages) backed by the JdbcChatMemoryRepository, so the
+ * conversation is persisted in Postgres - the same SPRING_AI_CHAT_MEMORY table v2 uses.
  */
 @RestController
 public class ChatModelMemoryController {
@@ -24,10 +27,11 @@ public class ChatModelMemoryController {
     private static final Logger log = LoggerFactory.getLogger(ChatModelMemoryController.class);
 
     private final ChatModel chatModel;
-    private final ChatMemory chatMemory = MessageWindowChatMemory.builder().build();
+    private final ChatMemory chatMemory;
 
-    public ChatModelMemoryController(ChatModel chatModel) {
+    public ChatModelMemoryController(ChatModel chatModel, ChatMemory chatMemory) {
         this.chatModel = chatModel;
+        this.chatMemory = chatMemory;
     }
 
     @PostMapping("/v3/memory/chats/{conversationId}")

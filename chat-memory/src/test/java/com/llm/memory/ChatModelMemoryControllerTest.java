@@ -3,6 +3,7 @@ package com.llm.memory;
 import com.llm.RecordingChatModel;
 import com.llm.dto.UserInput;
 import org.junit.jupiter.api.Test;
+import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -10,7 +11,8 @@ class ChatModelMemoryControllerTest {
 
     private final RecordingChatModel chatModel = new RecordingChatModel();
 
-    private final ChatModelMemoryController controller = new ChatModelMemoryController(chatModel);
+    private final ChatModelMemoryController controller = new ChatModelMemoryController(chatModel,
+            MessageWindowChatMemory.builder().build());
 
     @Test
     void manuallyManagedMemoryIsSentToTheModel() {

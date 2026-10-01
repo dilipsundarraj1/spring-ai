@@ -8,7 +8,10 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Widens the chat memory window beyond Spring AI's default of 20 messages.
+ * How to change the chat memory window, which Spring AI fixes at 20 messages.
+ * <p>
+ * The bean below is <strong>commented out on purpose</strong>: this module runs on the default 20, so there is only one
+ * number to keep track of. Uncomment it to take control of the window size.
  * <p>
  * There is no property for this. {@code ChatMemoryAutoConfiguration} declares
  * {@code MessageWindowChatMemory.builder().chatMemoryRepository(repo).build()} with
@@ -21,8 +24,8 @@ import org.springframework.context.annotation.Configuration;
  * in-memory repository while the auto-configured bean is JDBC-backed, v6 because its window has to
  * consolidate on eviction.
  * <p>
- * Tunable without recompiling, which is useful in a lecture - drop it to 6 to make eviction happen
- * after three Turns instead of twenty:
+ * Once enabled it is tunable without recompiling, which is useful in a lecture - drop it to 6 to make
+ * eviction happen after three Turns instead of ten:
  *
  * <pre>
  * chat-memory:
@@ -34,11 +37,11 @@ import org.springframework.context.annotation.Configuration;
 public class ChatMemoryConfig {
 
     /**
-     * Messages, not Turns: a Turn is a user message plus the assistant's reply, so 40 messages is
-     * twenty exchanges. Every message in the window is re-sent to the model on every call, so this
-     * number is a direct multiplier on tokens, cost and latency.
+     * Messages, not Turns: a Turn is a user message plus the assistant's reply, so 20 messages is ten
+     * exchanges. Every message in the window is re-sent to the model on every call, so this number is
+     * a direct multiplier on tokens, cost and latency.
      */
-    public static final int DEFAULT_MAX_MESSAGES = 40;
+    public static final int DEFAULT_MAX_MESSAGES = 20;
 
 //    @Bean
 //    ChatMemory chatMemory(ChatMemoryRepository chatMemoryRepository,

@@ -17,16 +17,21 @@
     - [Testing it: success, then eviction](#testing-it-success-then-eviction)
   - [Persistent Chat Memory with JDBC (Postgres)](#persistent-chat-memory-with-jdbc-postgres)
     - [The advisor flow](#the-advisor-flow)
+    - [Start Postgres first](#start-postgres-first)
     - [Dependency — `build.gradle`](#dependency--buildgradle)
     - [Configuration — `application.yml`](#configuration--applicationyml)
     - [The table](#the-table)
+    - [What we are building](#what-we-are-building)
     - [How eviction actually works: delete and rewrite](#how-eviction-actually-works-delete-and-rewrite)
       - [What `maxMessages` actually governs](#what-maxmessages-actually-governs)
-    - [Cleaning up](#cleaning-up)
     - [Testing it: success, restart, then eviction](#testing-it-success-restart-then-eviction)
-    - [Widening the window — `ChatMemoryConfig`](#widening-the-window--chatmemoryconfig)
-    - [Configuring the repository manually](#configuring-the-repository-manually)
+    - [Cleaning up](#cleaning-up)
+    - [Customizing the defaults](#customizing-the-defaults)
+      - [Widening the window — `ChatMemoryConfig`](#widening-the-window--chatmemoryconfig)
+      - [Configuring the repository manually](#configuring-the-repository-manually)
   - [Chat Memory with ChatModel (no advisor)](#chat-memory-with-chatmodel-no-advisor)
+    - [ChatModel vs ChatClient](#chatmodel-vs-chatclient)
+    - [Managing memory yourself](#managing-memory-yourself)
     - [Why you would do this](#why-you-would-do-this)
     - [Drawbacks](#drawbacks)
   - [Semantic Chat Memory with a Vector Store](#semantic-chat-memory-with-a-vector-store)
@@ -563,10 +568,10 @@ The conversation is stored in a relational database, so it **survives restarts**
 ```mermaid
 flowchart LR
     subgraph I1["App instance 1"]
-        A1["ChatClient<br/>+ MessageChatMemoryAdvisor"] --> M1["ChatMemory<br/>last 40 messages"]
+        A1["ChatClient<br/>+ MessageChatMemoryAdvisor"] --> M1["ChatMemory<br/>last 20 messages"]
     end
     subgraph I2["App instance 2 — or instance 1 after a restart"]
-        A2["ChatClient<br/>+ MessageChatMemoryAdvisor"] --> M2["ChatMemory<br/>last 40 messages"]
+        A2["ChatClient<br/>+ MessageChatMemoryAdvisor"] --> M2["ChatMemory<br/>last 20 messages"]
     end
 
     M1 --> R["JdbcChatMemoryRepository"]
@@ -616,10 +621,37 @@ sequenceDiagram
     A-->>C: the answer
 ```
 
-The only thing that differs from `v1` is the bottom of that stack. `v1`'s repository is a `ConcurrentHashMap`, so
-`get` and `add` are map operations; here every one of them is a **database round trip**. What "rewrite the window"
-actually means in SQL is the subject of
-[How eviction actually works](#how-eviction-actually-works-delete-and-rewrite).
+- **The only thing that differs from `v1` is the bottom of that stack.** Same advisor, same hooks, same
+  `MessageWindowChatMemory` — only the repository changed.
+- **`v1`'s repository is a `ConcurrentHashMap`**, so `get` and `add` are plain map operations on the JVM heap.
+- **Here every `get` and every `add` is a database round trip.** That is the whole cost of persistence, and it is paid
+  three times per request — see [the eviction flow](#how-eviction-actually-works-delete-and-rewrite).
+- **"Rewrite the window" is doing a lot of work in that diagram.** What it means in SQL — a `DELETE` of the entire
+  conversation followed by a batch `INSERT` — is the subject of
+  [How eviction actually works](#how-eviction-actually-works-delete-and-rewrite).
+
+### Start Postgres first
+
+Unlike `v1`, this endpoint cannot come up without a database. Bring it up from the **repo root**, where
+[`compose.yaml`](../compose.yaml) lives. This spins up Postgres from the ground up:
+
+```shell
+docker-compose up
+```
+
+> `compose.yaml` also defines `grafana-lgtm`, so the command above starts that too. To start only Postgres, in the
+> background, run `docker compose up pgvector -d` instead.
+
+Check it is actually accepting connections rather than merely created:
+
+```shell
+docker compose ps pgvector
+```
+
+```text
+NAME                   IMAGE                    SERVICE    STATUS       PORTS
+spring-ai-pgvector-1   pgvector/pgvector:pg16   pgvector   Up 2 weeks   0.0.0.0:5432->5432/tcp
+```
 
 ### Dependency — `build.gradle`
 
@@ -736,6 +768,20 @@ Instant createdAt = (Instant) message.getMetadata().get(JdbcChatMemoryRepository
 
 - Supported databases (dialect is auto-detected from the `DataSource`): PostgreSQL, MySQL, MariaDB, SQL Server, Oracle, HSQLDB, H2, SQLite.
 
+### What we are building
+
+Four endpoints on [`JdbcChatMemoryController`](src/main/java/com/llm/memory/JdbcChatMemoryController.java):
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/v2/memory/chats/{conversationId}` | Ask a question, with the conversation persisted in Postgres |
+| `GET` | `/v2/memory/chats/{conversationId}` | Read back what memory currently holds |
+| `GET` | `/v2/memory/conversations` | Every conversation id in the database |
+| `DELETE` | `/v2/memory/chats/{conversationId}` | Clear one conversation |
+
+`/v2/memory/conversations` is the one `v1` cannot offer: listing conversations means querying the store, and `v1`'s
+store is a map on the heap.
+
 ### How eviction actually works: delete and rewrite
 
 Does the conversation get deleted once it passes `maxMessages`? **Yes — and not just the overflow. The entire
@@ -795,9 +841,25 @@ sequenceDiagram
 ```
 
 **Read that as three Postgres visits, not one.** A single `/v2` request issues **3 `SELECT`s, 2 `DELETE`s and 2 batch
-`INSERT`s**: the advisor reads the window once to build the prompt, and then each of its two `add(...)` calls reads it
-again before replacing it wholesale. Eviction is not a separate step anywhere in that picture — it is just the trimmed
-list being shorter than what was deleted.
+`INSERT`s**:
+
+- **`get(conversationId)` → 1 `SELECT`.** Reads the window so the advisor can prepend it to the prompt.
+- **`add(userMessage)` → `SELECT`, then `DELETE`, then `INSERT`.** All three happen inside the one method. `add` is
+  given only a `conversationId` and the new message — not the window — so it re-reads it, appends and trims in memory,
+  then replaces the whole conversation:
+
+  ```java
+  public void add(String conversationId, List<Message> messages) {
+      List<Message> memoryMessages = this.chatMemoryRepository.findByConversationId(conversationId);  // SELECT
+      List<Message> processedMessages = process(memoryMessages, messages);                            // append + trim
+      this.chatMemoryRepository.saveAll(conversationId, processedMessages);                           // DELETE + INSERT
+  }
+  ```
+
+  The list `get()` already read is never passed in, and nothing caches it between the two calls.
+- **`add(assistantMessage)` → the same three statements again**, once the model has answered.
+- **Eviction is not a separate step anywhere in that picture.** There is no delete-the-old-rows operation. It is simply
+  the trimmed list being shorter than what the `DELETE` removed.
 
 `MessageWindowChatMemory` trims the list in memory and hands the survivors to the repository, whose only write
 operation is a wholesale replace:
@@ -843,33 +905,89 @@ Java list, in memory, before the rewrite. The rules (the full algorithm is in
 5. `SystemMessage`s are never cut, but they **do** count toward the budget.
 6. Whatever survives is written back with `sequence_id` renumbered from 0.
 
-With this module's `max-messages: 40` — twenty Turns — the twenty-first Turn is the first one that evicts:
+### Testing it: success, restart, then eviction
 
-| | before the `add` | after the rewrite |
-|---|---|---|
-| rows in `SPRING_AI_CHAT_MEMORY` | 40 | 40 |
-| `sequence_id` range | 0–39 | 0–39 |
-| the oldest Turn | present | **deleted, not renumbered — gone** |
-| messages written to the table | — | all 40, again |
+**Success — inside the window.** Identical to `v1`, except the window is Spring AI's default of **20 messages**
+(ten Turns) rather than `v1`'s ten:
 
-The row count and the `sequence_id` range are *identical* before and after, which is exactly why eviction is invisible
-unless you look at the content. Turn 21 did not append two rows; it deleted forty and inserted forty, two of which are
-new and two of which no longer exist anywhere.
+```shell
+curl -X POST http://localhost:8084/springai/v2/memory/chats/jdbc-1 \
+  -H "Content-Type: application/json" -d '{"prompt":"My name is Dilip and I drive a blue Tesla"}'
+# -> Nice to meet you, Dilip! A blue Tesla sounds great.
 
-Four consequences:
+curl -X POST http://localhost:8084/springai/v2/memory/chats/jdbc-1 \
+  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}'
+# -> You drive a blue Tesla.
+```
 
-- **Write amplification scales with the window, not the turn.** Each turn is *N* deletes plus *N* inserts, not two
-  inserts. With `max-messages: 40` that is up to forty rows rewritten per turn — and twice per request, because the
-  advisor calls `add(...)` before the model call and again after.
-- **`sequence_id` is a position, not an identity.** It is the index within the *current* window, reassigned on every
-  rewrite. Never use it as a stable message id, a cursor, or a global counter.
-- **Atomic, but not concurrency-safe.** The delete-and-insert is transactional, so you never see a half-written
-  conversation. But two simultaneous requests on the same `conversationId` each read the window, each compute their own
-  trimmed list, and each write — last writer wins and the other's messages vanish. Fine with one caller per
-  conversation; a real lost-update hazard under load.
-- **This is why an archive has to live somewhere else.** You cannot keep history on this path: the repository's only
-  write is "replace everything". It is the reason [Long-Term Memory](docs/long-term-memory.md) adds its own
-  `chat_history` table rather than reusing this one.
+The conversation is in Postgres, not the heap, so you can look at it:
+
+```sql
+SELECT conversation_id, type, content, sequence_id
+FROM SPRING_AI_CHAT_MEMORY WHERE conversation_id = 'jdbc-1' ORDER BY sequence_id;
+```
+
+```shell
+# which conversations does the database know about?
+curl -s http://localhost:8084/springai/v2/memory/conversations | jq
+# -> [ "jdbc-1" ]
+```
+
+**Survives a restart — the reason this endpoint exists.** Stop the app with `Ctrl+C`, start it again, then ask without
+re-stating anything:
+
+```shell
+./gradlew :chat-memory:bootRun        # after stopping it
+
+curl -X POST http://localhost:8084/springai/v2/memory/chats/jdbc-1 \
+  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}'
+# -> You drive a blue Tesla.          <-- the same question against v1 would fail here
+```
+
+Run the same restart against `v1` and the answer is gone: its `ConcurrentHashMap` died with the JVM.
+
+**Failure — eviction still happens, and it deletes rows.** Twenty messages is ten Turns, so an eleventh Turn pushes
+the first one out. Watch the row count rather than the answers:
+
+```shell
+curl -s -X POST http://localhost:8084/springai/v2/memory/chats/jdbc-2 \
+  -H "Content-Type: application/json" -d '{"prompt":"My name is Dilip and I drive a blue Tesla"}'
+
+for p in "What is 2 plus 2?" "Capital of France?" "Name a primary colour" "What is 10 divided by 5?" \
+         "Spell cat" "What is 3 times 3?" "Capital of Japan?" "Name a day of the week" \
+         "What is 100 minus 1?" "Spell dog"; do
+  curl -s -o /dev/null -X POST http://localhost:8084/springai/v2/memory/chats/jdbc-2 \
+    -H "Content-Type: application/json" -d "{\"prompt\":\"$p\"}"
+done
+```
+
+```sql
+-- after turn 1
+SELECT count(*) FROM SPRING_AI_CHAT_MEMORY WHERE conversation_id = 'jdbc-2';   -- 2
+
+-- after turn 11: capped, not grown
+SELECT count(*) FROM SPRING_AI_CHAT_MEMORY WHERE conversation_id = 'jdbc-2';   -- 20
+
+-- and the evicted Turn is not hidden, it is deleted
+SELECT count(*) FROM SPRING_AI_CHAT_MEMORY
+WHERE conversation_id = 'jdbc-2' AND content ILIKE '%tesla%';                  -- 0
+```
+
+```shell
+curl -X POST http://localhost:8084/springai/v2/memory/chats/jdbc-2 \
+  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}'
+# -> I don't know what car you drive.
+```
+
+> **This is the most important thing to show in this section.** Persistence is not history. The table never exceeds
+> `max-messages` rows, and the evicted Turn is **`DELETE`d from Postgres** — `MessageWindowChatMemory` trims the repository
+> itself, so the database holds the *window*, not the conversation. Students reasonably assume "it is in a database, so
+> it is kept"; these three `count(*)` queries are the fastest way to show that it is not. If you want an archive, you
+> have to write one — which is what [Long-Term Memory](docs/long-term-memory.md) does with its `chat_history` table.
+
+> **Neutral filler again.** As in `v1`, chatty filler like *"I live in Dallas"* makes the assistant reply *"Got it,
+> Dilip — you drive a blue Tesla"*, which puts the fact back into the window and stops the demo failing. Arithmetic and
+> trivia give it no reason to repeat anything.
 
 ### Cleaning up
 
@@ -923,96 +1041,12 @@ missing-relation error. Dropping the table is the fastest way to prove that prop
 > **The other memory tables in this database.** `chat_memory_vector_store` holds `v4` / `v5` memory, and
 > `chat_memory_long_term` plus `chat_history` hold `v6`'s. Wiping `SPRING_AI_CHAT_MEMORY` leaves all of those untouched.
 
-### Testing it: success, restart, then eviction
+### Customizing the defaults
 
-**Success — inside the window.** Identical to `v1`, except the window here is **40 messages** (twenty Turns), set by
-[`ChatMemoryConfig`](src/main/java/com/llm/config/ChatMemoryConfig.java) — Spring AI's own default is 20:
+Everything above runs on what the starter auto-configured. Both customizations below work the same way: Spring AI
+declares its beans with `@ConditionalOnMissingBean`, so publishing your own is all it takes to replace them.
 
-```shell
-curl -X POST http://localhost:8084/springai/v2/memory/chats/jdbc-1 \
-  -H "Content-Type: application/json" -d '{"prompt":"My name is Dilip and I drive a blue Tesla"}'
-# -> Nice to meet you, Dilip! A blue Tesla sounds great.
-
-curl -X POST http://localhost:8084/springai/v2/memory/chats/jdbc-1 \
-  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}'
-# -> You drive a blue Tesla.
-```
-
-The conversation is in Postgres, not the heap, so you can look at it:
-
-```sql
-SELECT conversation_id, type, content, sequence_id
-FROM SPRING_AI_CHAT_MEMORY WHERE conversation_id = 'jdbc-1' ORDER BY sequence_id;
-```
-
-```shell
-# which conversations does the database know about?
-curl -s http://localhost:8084/springai/v2/memory/conversations | jq
-# -> [ "jdbc-1" ]
-```
-
-**Survives a restart — the reason this endpoint exists.** Stop the app with `Ctrl+C`, start it again, then ask without
-re-stating anything:
-
-```shell
-./gradlew :chat-memory:bootRun        # after stopping it
-
-curl -X POST http://localhost:8084/springai/v2/memory/chats/jdbc-1 \
-  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}'
-# -> You drive a blue Tesla.          <-- the same question against v1 would fail here
-```
-
-Run the same restart against `v1` and the answer is gone: its `ConcurrentHashMap` died with the JVM.
-
-**Failure — eviction still happens, and it deletes rows.** Forty messages is twenty Turns, so a twenty-first Turn
-pushes the first one out. That is a lot of curl calls, so either run the loop below with more filler, or set
-`chat-memory.window.max-messages: 6` in `application.yml` and the same demo needs only four Turns. Watch the row count
-rather than the answers:
-
-```shell
-curl -s -X POST http://localhost:8084/springai/v2/memory/chats/jdbc-2 \
-  -H "Content-Type: application/json" -d '{"prompt":"My name is Dilip and I drive a blue Tesla"}'
-
-for p in "What is 2 plus 2?" "Capital of France?" "Name a primary colour" "What is 10 divided by 5?" \
-         "Spell cat" "What is 3 times 3?" "Capital of Japan?" "Name a day of the week" \
-         "What is 100 minus 1?" "Spell dog"; do
-  curl -s -o /dev/null -X POST http://localhost:8084/springai/v2/memory/chats/jdbc-2 \
-    -H "Content-Type: application/json" -d "{\"prompt\":\"$p\"}"
-done
-```
-
-```sql
--- after turn 1
-SELECT count(*) FROM SPRING_AI_CHAT_MEMORY WHERE conversation_id = 'jdbc-2';   -- 2
-
--- after turn 11, with max-messages = 40: nothing dropped yet
-SELECT count(*) FROM SPRING_AI_CHAT_MEMORY WHERE conversation_id = 'jdbc-2';   -- 22
-SELECT count(*) FROM SPRING_AI_CHAT_MEMORY
-WHERE conversation_id = 'jdbc-2' AND content ILIKE '%tesla%';                  -- still there
-
--- once the window is exceeded: capped, not grown, and the evicted Turn is DELETED
-SELECT count(*) FROM SPRING_AI_CHAT_MEMORY WHERE conversation_id = 'jdbc-2';   -- 40
-SELECT count(*) FROM SPRING_AI_CHAT_MEMORY
-WHERE conversation_id = 'jdbc-2' AND content ILIKE '%tesla%';                  -- 0
-```
-
-```shell
-curl -X POST http://localhost:8084/springai/v2/memory/chats/jdbc-2 \
-  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}'
-# -> I don't know what car you drive.
-```
-
-> **This is the most important thing to show in this section.** Persistence is not history. The table never exceeds
-> `max-messages` rows, and the evicted Turn is **`DELETE`d from Postgres** — `MessageWindowChatMemory` trims the repository
-> itself, so the database holds the *window*, not the conversation. Students reasonably assume "it is in a database, so
-> it is kept"; these three `count(*)` queries are the fastest way to show that it is not. If you want an archive, you
-> have to write one — which is what [Long-Term Memory](docs/long-term-memory.md) does with its `chat_history` table.
-
-> **Neutral filler again.** As in `v1`, chatty filler like *"I live in Dallas"* makes the assistant reply *"Got it,
-> Dilip — you drive a blue Tesla"*, which puts the fact back into the window and stops the demo failing. Arithmetic and
-> trivia give it no reason to repeat anything.
-
-### Widening the window — `ChatMemoryConfig`
+#### Widening the window — `ChatMemoryConfig`
 
 Spring AI's default window is **20 messages**, and **there is no property to change it**:
 `ChatMemoryAutoConfiguration` declares
@@ -1026,14 +1060,15 @@ ChatMemory chatMemory(ChatMemoryRepository repo) {
 ```
 
 with no configuration class of its own. The `@ConditionalOnMissingBean` is the opening: publish your own `ChatMemory`
-and the auto-configured one backs off. That is what
-[`ChatMemoryConfig`](src/main/java/com/llm/config/ChatMemoryConfig.java) does, taking this module to **40 messages**
-(twenty Turns):
+and the auto-configured one backs off.
+
+[`ChatMemoryConfig`](src/main/java/com/llm/config/ChatMemoryConfig.java) shows how, and ships **commented out** — this
+module deliberately runs on the default 20 so there is only one number to keep track of. Uncomment it to take control:
 
 ```java
 @Bean
 ChatMemory chatMemory(ChatMemoryRepository chatMemoryRepository,
-        @Value("${chat-memory.window.max-messages:40}") int maxMessages) {
+        @Value("${chat-memory.window.max-messages:20}") int maxMessages) {
     return MessageWindowChatMemory.builder()
             .chatMemoryRepository(chatMemoryRepository)
             .maxMessages(maxMessages)
@@ -1041,16 +1076,11 @@ ChatMemory chatMemory(ChatMemoryRepository chatMemoryRepository,
 }
 ```
 
-Two things to know about that bean:
+**It counts messages, not Turns.** Every message in the window is re-sent on every call, so the number multiplies
+tokens, cost and latency directly — 20 messages is ten exchanges of context on every single request.
 
-- **It changes `v2` and `v3`**, the two controllers that inject `ChatMemory`. `v1` and `v6` build their own on
-  purpose — `v1` to keep an in-memory repository while the auto-configured bean is JDBC-backed, `v6` because its window
-  has to consolidate on eviction — so neither is affected.
-- **Messages, not Turns.** Every message in the window is re-sent on every call, so this number multiplies tokens, cost
-  and latency directly. Forty messages is twenty exchanges of context on every single request.
-
-The `@Value` makes it tunable without recompiling, which is handy in a lecture — drop it to `6` and eviction arrives
-after three Turns instead of twenty:
+Once that bean is active the `@Value` makes it tunable without recompiling, which is handy in a lecture: drop it to `6`
+and eviction arrives after three Turns instead of ten.
 
 ```yaml
 chat-memory:
@@ -1058,7 +1088,7 @@ chat-memory:
     max-messages: 6
 ```
 
-### Configuring the repository manually
+#### Configuring the repository manually
 
 Only needed if you want a different dialect or `JdbcTemplate` than the auto-configuration gives you:
 
@@ -1081,10 +1111,29 @@ ChatMemory chatMemory(JdbcTemplate jdbcTemplate) {
 
 ## Chat Memory with ChatModel (no advisor)
 
-**Endpoint:** `POST /v3/memory/chats/{conversationId}` — [`ChatModelMemoryController`](src/main/java/com/llm/memory/ChatModelMemoryController.java)
+### ChatModel vs ChatClient
 
-If you use the low-level `ChatModel` instead of `ChatClient`, there are no advisors — you manage memory yourself.
-This is exactly what `MessageChatMemoryAdvisor` does for you behind the scenes:
+Spring AI gives you two ways to talk to an LLM. `ChatClient` is built **on top of** `ChatModel`: every `ChatClient`
+call ends in a `ChatModel.call(...)`, after running the advisor chain around it.
+
+| | `ChatModel` | `ChatClient` |
+|---|---|---|
+| Level | Low-level, one implementation per provider (`OpenAiChatModel`, ...) | High-level fluent API over any `ChatModel` |
+| Input | A `Prompt` you assemble: `new Prompt(List<Message>)` | Built for you: `.system(...)`, `.user(...)`, `.messages(...)` |
+| Output | `ChatResponse` — always | `.content()` (`String`), `.entity(...)` (POJO) or `.chatResponse()` |
+| Advisors | **None** | Advisor chain: memory, RAG, logging, safeguards, tool calling |
+| Chat memory | **You** read and write `ChatMemory` | `MessageChatMemoryAdvisor` does it |
+| Structured output | Parse it yourself | `.entity(MyRecord.class)` |
+| Tool calling | Not in 2.0 — the loop lives in `ToolCallingAdvisor` | Built in |
+
+In short: `ChatClient` for application code, `ChatModel` when you want nothing between you and the provider.
+Memory is the clearest place to see the difference — with `ChatModel` there is no advisor to remember the
+conversation, so the controller has to.
+
+### Managing memory yourself
+
+With `ChatModel` you call `ChatMemory` directly, in three steps. This is exactly what `MessageChatMemoryAdvisor` does
+for you behind the scenes:
 
 ```java
 // 1. save the user message
@@ -1113,44 +1162,52 @@ sequenceDiagram
     C->>M: add(conversationId, AssistantMessage)
 ```
 
+**Endpoint:** `POST /v3/memory/chats/{conversationId}` — [`ChatModelMemoryController`](src/main/java/com/llm/memory/ChatModelMemoryController.java)
+
 Compare it with [How the advisor works](#how-the-advisor-works): the steps are identical — the only difference is who
 writes them.
 
+The `ChatMemory` is injected, not built — it is the same auto-configured, JDBC-backed `MessageWindowChatMemory` that
+`v2` uses, so this conversation is persisted in Postgres too:
+
+```java
+public ChatModelMemoryController(ChatModel chatModel, ChatMemory chatMemory) {
+    this.chatModel = chatModel;
+    this.chatMemory = chatMemory;   // MessageWindowChatMemory over JdbcChatMemoryRepository
+}
+```
+
+> `v2` and `v3` share the `SPRING_AI_CHAT_MEMORY` table, so the same `conversationId` on both endpoints is the **same
+> conversation**. Use distinct ids (`jdbc-1`, `model-1`) to keep them apart.
+
+**Every conversation** — a clean slate for the next demo:
+
+```sql
+DELETE FROM SPRING_AI_CHAT_MEMORY;            -- or, faster and non-transactional:
+TRUNCATE TABLE SPRING_AI_CHAT_MEMORY;
+```
+
 ### Why you would do this
 
-- **To understand advisors.** This is the reason it is in the course. Once you have written those three lines, a
-  `MessageChatMemoryAdvisor` stops being magic: it is a `before` hook that prepends `chatMemory.get(...)` and an `after`
-  hook that calls `chatMemory.add(...)`.
-- **You need the raw `ChatResponse`.** `chatClient...call().content()` hands back a `String`. `chatModel.call(prompt)`
-  returns the whole response — token usage, finish reason, all generations. If you are metering cost per conversation or
-  logging why a completion stopped, this is the shorter path.
-- **You need control of the exact message list.** The advisor assembles the prompt one fixed way. Here you decide: drop
-  messages matching a rule, redact before sending, reorder, inject a synthetic message, summarise the older half.
-- **Your memory policy does not fit the abstraction.** Writing to two stores, persisting only messages that pass a
-  filter, or recording something extra alongside each message — all trivial here, all awkward inside an advisor.
-- **There is no advisor chain to reason about.** With several advisors, ordering effects are real (see how the vector
-  advisor *replaces* your system message). One method with three statements has no such surprises.
+- **To understand advisors.** Write these three lines once and `MessageChatMemoryAdvisor` stops being magic: a `before`
+  hook that prepends `get(...)`, an `after` hook that calls `add(...)`.
+- **You need the raw `ChatResponse`** — token usage, finish reason, all generations. `ChatClient` hands back a `String`.
+- **Your memory policy does not fit the abstraction** — two stores, conditional persistence, extra fields per message.
 
 ### Drawbacks
 
-- **You own the bookkeeping, and forgetting it fails silently.** Omit step 3 and memory simply stops growing. Nothing
-  throws; the model just appears to forget, which is a genuinely unpleasant bug to chase.
-- **Ordering is yours to get wrong.** The user message must be stored *before* the call and the assistant message
-  *after*. Store the user message twice and the model sees the question duplicated; store it after and it never sees it
-  at all.
-- **A failed call poisons memory.** If `chatModel.call(...)` throws, the user message is already in the store — so
-  memory now holds a question with no answer, and it will be replayed on every future call in that conversation. The
-  advisor path has the same hazard; the difference is that here it is visibly your problem to handle.
-- **You lose everything else advisors give you**, not just memory: `SimpleLoggerAdvisor`'s `DEBUG` dump of the exact
-  prompt, `QuestionAnswerAdvisor` for RAG, `SafeGuardAdvisor`, and `ChatClient`'s `.entity(...)` structured-output
-  binding — with a bare `ChatModel` you parse the text yourself.
-- **Tool calling is a dead end on this path.** The supported tool loop is `ToolCallingAdvisor`, which exists only on the
-  `ChatClient` side. `OpenAiChatModel`'s own internal tool execution is **deprecated since 2.0.0 and removed in 3.0.0**
-  — its javadoc says so outright: *"internal tool execution in OpenAiChatModel is superseded by ToolCallingAdvisor used
-  via ChatClient"*. If your endpoint needs tools, it needs a `ChatClient`.
-- **It does not scale across controllers.** Three lines per endpoint is fine; the same three lines in fifteen endpoints
-  is the duplication advisors exist to remove — and each copy is a place to thread `conversationId` incorrectly and
-  leak one user's history into another's prompt.
+- **You own the bookkeeping, and forgetting it fails silently.** Omit step 3 and memory stops growing. Nothing throws —
+  the model just appears to forget.
+- **Ordering is yours to get wrong.** User message before the call, assistant message after. Reverse it and the model
+  never sees the question.
+- **A failed call poisons memory.** If `call(...)` throws, the user message is already stored — a question with no
+  answer, replayed forever.
+- **You lose every other advisor**, not just memory: `SimpleLoggerAdvisor`, `QuestionAnswerAdvisor`, `SafeGuardAdvisor`,
+  and `.entity(...)` structured output.
+- **Tool calling is a dead end here.** The tool loop lives in `ToolCallingAdvisor`, on the `ChatClient` side.
+  `OpenAiChatModel`'s own tool execution is deprecated in 2.0 and gone in 3.0.
+- **It does not scale.** Three lines per endpoint is fine; fifteen copies is the duplication advisors exist to remove,
+  each one a chance to thread `conversationId` wrong.
 
 **Rule of thumb:** use `ChatClient` and an advisor unless you need the raw `ChatResponse` or control of the exact
 message list. Reach for `ChatModel` deliberately, not by default.
@@ -1159,9 +1216,11 @@ message list. Reach for `ChatModel` deliberately, not by default.
 
 **Endpoint:** `POST /v4/memory/chats/{conversationId}` — [`VectorStoreChatMemoryController`](src/main/java/com/llm/memory/VectorStoreChatMemoryController.java)
 
-Everything so far replays the **most recent** messages. `VectorStoreChatMemoryAdvisor` replays the **most relevant**
-ones instead: every message is embedded and stored in a vector store, and each new question triggers a similarity
-search that pulls back only the past messages related to it.
+- **Everything so far** replays the **most recent** messages.
+- **`VectorStoreChatMemoryAdvisor`** replays the **most relevant** ones instead:
+  - every message is embedded and stored in a vector store;
+  - each new question triggers a similarity search;
+  - only the past messages related to that question are pulled back.
 
 That fixes the sliding window's blind spot — "My name is Dilip" said 200 messages ago is still retrievable, because
 recall is driven by meaning, not by recency.
@@ -1322,11 +1381,6 @@ spring:
 `initialize-schema: true` creates the table and the `vector` / `hstore` extensions on startup. The table name is
 overridden so conversation memory doesn't land in the same table `explore-rag` uses for ingested PDFs.
 
-> **Watch out in tests:** that schema init runs `CREATE EXTENSION IF NOT EXISTS vector`, which HSQLDB cannot parse.
-> `JdbcChatMemoryControllerIntegrationTest` boots the whole app on HSQLDB, so it sets
-> `spring.ai.vectorstore.pgvector.initialize-schema=false` — the `VectorStore` bean is still created, it just never
-> touches the database there.
-
 ### Setting up the controller
 
 ```java
@@ -1344,19 +1398,13 @@ public VectorStoreChatMemoryController(ChatClient.Builder chatClientBuilder, Vec
 }
 ```
 
-- **`builder(vectorStore)`** — the advisor takes the store, not a `ChatMemory`. That single argument is the whole setup.
-- **`defaultTopK(20)`** — how many past messages to retrieve per question, the advisor's own default. Resist the
-  urge to shrink it for readability: the advisor stores **every question too**, so repeated questions sit in the
-  results at similarity `1.0` and push the actual answers out (see [Trade-offs](#trade-offs)).
-- **`defaultSystem(...)` matters here.** The advisor reads your system text, substitutes it as `{instructions}` in its
-  own template, and **replaces** the system message with the result — `augmentSystemMessage` is a replace, and it
-  inserts a system message if you never set one. Leave `defaultSystem(...)` off and `{instructions}` renders empty:
-  memory still arrives, but the model's entire system prompt becomes "here is some past conversation" — no role, no
-  task, no tone.
-- **The `VectorStore` is kept as a field** so the recall and clear endpoints can query and delete directly; the
-  advisor exposes no API for either.
-- **`SimpleLoggerAdvisor` after it** shows the fully assembled system message at `DEBUG` — the best way to see what
-  was actually recalled.
+- **`builder(vectorStore)`** — takes the store, not a `ChatMemory`. That is the whole setup.
+- **`defaultTopK(20)`** — past messages retrieved per question (the default). Don't shrink it: stored questions match
+  repeats at `1.0` and crowd out the answers (see [Trade-offs](#trade-offs)).
+- **`defaultSystem(...)` matters.** The advisor **replaces** the system message with its own template, your text
+  filling `{instructions}`. Leave it off and the model gets past conversation but no role or task.
+- **`VectorStore` kept as a field** — the recall and clear endpoints use it directly; the advisor has no API for either.
+- **`SimpleLoggerAdvisor`** — logs the assembled system message at `DEBUG`, showing what was recalled.
 
 ### Chat — `POST /v4/memory/chats/{conversationId}`
 
@@ -1840,10 +1888,11 @@ rather than the repository — and has its own section:
 
 ## Running the module
 
-**1. Start Postgres** (the same container used by `explore-rag`):
+**1. Start Postgres** (the same container used by `explore-rag`) from the repo root. This spins up Postgres from the
+ground up:
 
 ```shell
-docker compose up pgvector -d
+docker-compose up
 ```
 
 **2. Run the app** (port `8084`):
