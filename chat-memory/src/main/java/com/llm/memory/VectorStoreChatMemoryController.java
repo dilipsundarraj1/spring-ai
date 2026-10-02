@@ -59,7 +59,7 @@ public class VectorStoreChatMemoryController {
         // The advisor writes into the vector store itself - no ChatMemory / ChatMemoryRepository involved.
         this.chatClient = chatClientBuilder
                 .defaultSystem("""
-                        You are a concise personal assistant. Answer in one short sentence.
+                        You are a friendly personal assistant.
                         Everything under LONG_TERM_MEMORY was told to you by this user earlier - rely on it
                         and never say you don't know something that appears there.""")
                 .defaultAdvisors(

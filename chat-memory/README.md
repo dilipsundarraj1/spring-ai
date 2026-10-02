@@ -43,11 +43,12 @@
     - [Configuration — `application.yml`](#configuration--applicationyml-1)
     - [Setting up the controller](#setting-up-the-controller-1)
     - [Chat — `POST /v4/memory/chats/{conversationId}`](#chat--post-v4memorychatsconversationid)
+    - [Recall — `GET /v4/memory/chats/{conversationId}?query=...`](#recall--get-v4memorychatsconversationidquery)
+      - [Changing `topK` per call](#changing-topk-per-call)
+    - [Clear — `DELETE /v4/memory/chats/{conversationId}`](#clear--delete-v4memorychatsconversationid)
     - [Under the hood: how the advisor uses the VectorStore](#under-the-hood-how-the-advisor-uses-the-vectorstore)
       - [How conversations are stored](#how-conversations-are-stored)
       - [How conversations are retrieved](#how-conversations-are-retrieved)
-    - [Recall — `GET /v4/memory/chats/{conversationId}?query=...`](#recall--get-v4memorychatsconversationidquery)
-    - [Clear — `DELETE /v4/memory/chats/{conversationId}`](#clear--delete-v4memorychatsconversationid)
     - [Testing it: what semantic recall gets right, and what it does not](#testing-it-what-semantic-recall-gets-right-and-what-it-does-not)
     - [Trade-offs](#trade-offs)
   - [Taking Control: Semantic Memory Without the Advisor](#taking-control-semantic-memory-without-the-advisor)
@@ -1326,9 +1327,21 @@ flowchart TB
     Q --> SEARCH["similaritySearch · topK = 20 · conversationId = user-1"]
     CONV --> SEARCH
 
-    SEARCH == "recalled — closest in meaning" ==> H1["USER · ...blue Tesla"]
-    SEARCH == "recalled" ==> H2["ASSISTANT · Nice to meet you, Dilip!"]
-    SEARCH -. "not recalled — most recent, but unrelated" .-> H3["the database joke stays in the store"]
+    subgraph HIT["Recalled — closest in meaning"]
+        direction TB
+        H1["USER · My name is Dilip and I drive a blue Tesla"]
+        H2["ASSISTANT · Nice to meet you, Dilip!"]
+    end
+
+    subgraph MISS["Not recalled — stay in the store"]
+        direction TB
+        X1["USER · I work as a software architect"]
+        X2["USER · Tell me a joke about databases"]
+        X3["ASSISTANT · Why did the query go to therapy?"]
+    end
+
+    SEARCH ==> HIT
+    SEARCH -. "unrelated — even the most recent" .-> MISS
 
     H1 --> SYS["SYSTEM message<br/>your instructions<br/>+ LONG_TERM_MEMORY<br/>· memory-entry type=user · ...blue Tesla<br/>· memory-entry type=assistant · Nice to meet you, Dilip!"]
     H2 --> SYS
@@ -1351,7 +1364,7 @@ USER:      What car do I drive?                         ← the real question
 **B — `VectorStoreChatMemoryAdvisor`** sends **only what the search recalled**, folded into the system message:
 
 ```text
-SYSTEM:    You are a concise personal assistant. ...
+SYSTEM:    You are a friendly personal assistant. ...
            LONG_TERM_MEMORY:
            <memory-entry type="user">My name is Dilip and I drive a blue Tesla</memory-entry>   ← recalled
            <memory-entry type="assistant">Nice to meet you, Dilip!</memory-entry>               ← recalled
@@ -1474,12 +1487,136 @@ curl -X POST "http://localhost:8084/springai/v4/memory/chats/user-1?topK=3" \
 # narrow the search for one call, to see recall degrade
 curl -X POST "http://localhost:8084/springai/v4/memory/chats/user-1?topK=2" \
   -H "Content-Type: application/json" -d '{"prompt":"What do you know about me?"}'
+
+# widen it again - more of the conversation comes back
+curl -X POST "http://localhost:8084/springai/v4/memory/chats/user-1?topK=6" \
+  -H "Content-Type: application/json" -d '{"prompt":"What do you know about me?"}'
+```
+
+### Recall — `GET /v4/memory/chats/{conversationId}?query=...`
+
+Runs the *same* similarity search the advisor runs, so you can see exactly what would be recalled for a question
+before sending it to the LLM:
+
+```java
+var searchRequest = SearchRequest.builder()
+        .query(query)
+        .topK(topK)
+        .filterExpression(conversationFilter(conversationId))
+        .build();
+
+List<Document> documents = vectorStore.similaritySearch(searchRequest);
+```
+
+```shell
+curl -G http://localhost:8084/springai/v4/memory/chats/user-1 \
+  --data-urlencode "query=What car do I drive?" --data-urlencode "topK=3" | jq
+```
+
+```json
+[
+  {
+    "type": "USER",
+    "text": "My name is Dilip and I drive a blue Tesla",
+    "score": 0.7916143238544464,
+    "distance": 0.2083856761455536
+  },
+  {
+    "type": "ASSISTANT",
+    "text": "Nice to meet you, Dilip! I’ll remember that you drive a blue Tesla.",
+    "score": 0.7536427080631256,
+    "distance": 0.2463572919368744
+  },
+  {
+    "type": "USER",
+    "text": "I work as a software architect",
+    "score": 0.7292972505092621,
+    "distance": 0.2707027494907379
+  }
+]
+```
+
+**`score` and `distance` are one measurement, inverted.** `PgVectorStore` runs the cosine distance operator
+(`embedding <=> query`) and sets `score = 1.0 - distance` — add any pair above and you get exactly `1.0`:
+
+| | 0.0 means | 1.0 means | Used by |
+|---|---|---|---|
+| `distance` | identical | unrelated-ish | the index — it is what `ORDER BY` sorts on in SQL |
+| `score` | unrelated-ish | identical | the API — it is what `similarityThreshold` compares against |
+
+#### Changing `topK` per call
+
+```shell
+# the same question with only the 3 nearest messages recalled
+curl -X POST "http://localhost:8084/springai/v4/memory/chats/user-1?topK=3" \
+  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}'
+
+# narrow the search for one call, to see recall degrade
+curl -X POST "http://localhost:8084/springai/v4/memory/chats/user-1?topK=2" \
+  -H "Content-Type: application/json" -d '{"prompt":"What do you know about me?"}'
+
+# widen it again - more of the conversation comes back
+curl -X POST "http://localhost:8084/springai/v4/memory/chats/user-1?topK=6" \
+  -H "Content-Type: application/json" -d '{"prompt":"What do you know about me?"}'
+```
+
+### Clear — `DELETE /v4/memory/chats/{conversationId}`
+
+The advisor has no `clear()`, so the controller deletes straight from the store using the same metadata filter:
+
+```java
+vectorStore.delete(new FilterExpressionBuilder().eq("conversationId", conversationId).build());
+```
+
+```shell
+curl -i -X DELETE http://localhost:8084/springai/v4/memory/chats/user-1
 ```
 
 ### Under the hood: how the advisor uses the VectorStore
 
 The advisor never talks to Postgres or the embedding model itself — every read and write goes through the
 `VectorStore`. Storing happens on both sides of the LLM call; retrieving happens once, before it.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as ChatClient
+    participant A as VectorStoreChatMemoryAdvisor
+    participant V as VectorStore<br/>(PgVectorStore)
+    participant E as EmbeddingModel
+    participant P as Postgres<br/>chat_memory_vector_store
+    participant L as LLM
+
+    C->>A: prompt "What car do I drive?" (conversationId = user-1)
+
+    Note over A,P: before() · retrieve
+    A->>V: similaritySearch(query, topK, conversationId filter)
+    V->>E: embed(question)
+    E-->>V: query vector
+    V->>P: SELECT ... ORDER BY embedding <=> vector LIMIT topK
+    P-->>V: nearest rows
+    V-->>A: List<Document>
+    A->>A: render as memory-entry lines into the SYSTEM message
+
+    Note over A,P: before() · store the question
+    A->>V: write(UserMessage as Document)
+    V->>E: embed(question text)
+    V->>P: INSERT (id, content, metadata, embedding)
+
+    A->>L: SYSTEM (instructions + LONG_TERM_MEMORY) + USER question
+    L-->>A: "You drive a blue Tesla."
+
+    Note over A,P: after() · store the answer
+    A->>V: write(AssistantMessage as Document)
+    V->>E: embed(answer text)
+    V->>P: INSERT (id, content, metadata, embedding)
+
+    A-->>C: "You drive a blue Tesla."
+```
+
+- **The advisor only speaks `VectorStore`** — `similaritySearch(...)` to read, `write(...)` to store.
+- **The `VectorStore` does the rest** — it calls the `EmbeddingModel` and runs the SQL against Postgres.
+- **Three embedding calls per Turn** — the question once for the search, then each message as it is stored.
 
 #### How conversations are stored
 
@@ -1539,77 +1676,6 @@ VectorStoreChatMemoryAdvisor.before()
 - **The results become text.** Each `Document` is rendered as `<memory-entry type="user|assistant">...</memory-entry>`
   inside `LONG_TERM_MEMORY` in the system message — see [What the advisor does on each call](#what-the-advisor-does-on-each-call).
 
-### Recall — `GET /v4/memory/chats/{conversationId}?query=...`
-
-Runs the *same* similarity search the advisor runs, so you can see exactly what would be recalled for a question
-before sending it to the LLM:
-
-```java
-var searchRequest = SearchRequest.builder()
-        .query(query)
-        .topK(topK)
-        .filterExpression(conversationFilter(conversationId))
-        .build();
-
-List<Document> documents = vectorStore.similaritySearch(searchRequest);
-```
-
-```shell
-curl -G http://localhost:8084/springai/v4/memory/chats/user-1 \
-  --data-urlencode "query=What car do I drive?" --data-urlencode "topK=3" | jq
-```
-
-```json
-[
-  {
-    "type": "USER",
-    "text": "My name is Dilip and I drive a blue Tesla",
-    "score": 0.7916143238544464,
-    "distance": 0.2083856761455536
-  },
-  {
-    "type": "ASSISTANT",
-    "text": "Nice to meet you, Dilip! I’ll remember that you drive a blue Tesla.",
-    "score": 0.7536427080631256,
-    "distance": 0.2463572919368744
-  },
-  {
-    "type": "USER",
-    "text": "I work as a software architect",
-    "score": 0.7292972505092621,
-    "distance": 0.2707027494907379
-  }
-]
-```
-
-**`score` and `distance` are one measurement, inverted.** `PgVectorStore` runs the cosine distance operator
-(`embedding <=> query`) and sets `score = 1.0 - distance` — add any pair above and you get exactly `1.0`:
-
-| | 0.0 means | 1.0 means | Used by |
-|---|---|---|---|
-| `distance` | identical | unrelated-ish | the index — it is what `ORDER BY` sorts on in SQL |
-| `score` | unrelated-ish | identical | the API — it is what `similarityThreshold` compares against |
-
-Both are reported because hand-written SQL deals in **distance** while Spring AI's API deals in **score**, and quietly
-swapping one for the other inverts your filter. Note also how compressed the range is: the *exact* topic scores `0.79`
-and an unrelated sentence still scores `0.73` — barely `0.06` apart. That narrowness is the subject of
-[Testing it](#testing-it-what-semantic-recall-gets-right-and-what-it-does-not).
-
-Note what is **not** here: the joke about databases. It was the most recent exchange, but it isn't relevant to the
-question, so it isn't recalled — the opposite of what `MessageWindowChatMemory` would have done.
-
-### Clear — `DELETE /v4/memory/chats/{conversationId}`
-
-The advisor has no `clear()`, so the controller deletes straight from the store using the same metadata filter:
-
-```java
-vectorStore.delete(new FilterExpressionBuilder().eq("conversationId", conversationId).build());
-```
-
-```shell
-curl -i -X DELETE http://localhost:8084/springai/v4/memory/chats/user-1
-```
-
 ### Testing it: what semantic recall gets right, and what it does not
 
 Start clean, then plant a fact and bury it under unrelated chatter:
@@ -1639,29 +1705,13 @@ curl -X POST http://localhost:8084/springai/v4/memory/chats/vec-demo \
 That is the whole promise of this advisor, and it delivers. Now the two ways it does not.
 
 **Negative 1 — an unrelated question pulls in everything.** Ask about the weather, a subject that appears nowhere in
-the conversation. `v4`'s own recall endpoint does not report scores, so inspect the same store through `v5`, which does
-— they share `conversationId` and the same table:
+the conversation. `v4`'s [recall endpoint](#recall--get-v4memorychatsconversationidquery) runs the same search the
+advisor runs and reports each hit's score:
 
 ```shell
-curl -s -G http://localhost:8084/springai/v5/memory/chats/vec-demo \
-  --data-urlencode "query=Whats the weather?" --data-urlencode "dedupe=false" | jq
+curl -s -G http://localhost:8084/springai/v4/memory/chats/vec-demo \
+  --data-urlencode "query=Whats the weather?" | jq
 ```
-
-```text
-fetched from store: 14   returned: 14
-  0.7593  USER       What is the capital of France?      <-- the "most relevant" hit
-  0.7484  USER       What car do I drive?
-  0.7394  ASSISTANT  The capital of France is Paris.
-  0.7332  USER       Spell cat
-  0.7298  USER       My name is Dilip and I drive a blue Tesla
-  ...
-  0.7010  ASSISTANT  3 times 3 is 9.
-```
-
-So: **no, it does not pull only the relevant ones — it pulls all fourteen.** Every message scores between `0.7010` and
-`0.7593`, a spread of `0.058`, and the top hit for a *weather* question is a question about *France*. Nothing was
-excluded because nothing can be: `topK` is a count, and there is no similarity floor. Ranking inside a band that narrow
-is not a relevance judgement.
 
 **Negative 2 — repeating a question crowds out its own answer.** Every question is stored too, so ask the same thing a
 few times and the store fills with perfect matches that carry no information:
@@ -1703,11 +1753,8 @@ The fact is still in the database. The model was simply handed two copies of its
 
 ### Trade-offs
 
-- **Recall degrades as you repeat yourself.** Every *question* is stored too, so asking "What car do I drive?" three
-  times leaves three copies sitting at similarity `1.0` — perfect matches that carry no information. With a small
-  `topK` they fill the whole window and the answer never reaches the model, which then says it does not know. The
-  assistant's own "I don't know" is stored as well, and is recalled next time. Keep `topK` generous, and clear a
-  conversation (`DELETE /v4/...`) once it is polluted.
+- **Recall degrades as you repeat yourself.** Repeated questions are stored too and match at `1.0`; with a small
+  `topK` they crowd out the answer. Keep `topK` generous, and clear a polluted conversation (`DELETE /v4/...`).
 - **Nothing is ever evicted.** The store grows with every message — good for recall, but you own the retention
   policy (a scheduled delete, a TTL in the store, or nothing at all).
 - **Every call costs embeddings**: one for the question on read, one per message on write. That is real money and
