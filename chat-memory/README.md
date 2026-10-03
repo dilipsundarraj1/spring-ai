@@ -1723,9 +1723,8 @@ curl -s -o /dev/null -X POST http://localhost:8084/springai/v4/memory/chats/vec-
 curl -s -o /dev/null -X POST http://localhost:8084/springai/v4/memory/chats/vec-demo \
   -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}'
 
-curl -s -G http://localhost:8084/springai/v5/memory/chats/vec-demo \
-  --data-urlencode "query=What car do I drive?" --data-urlencode "dedupe=false" \
-  --data-urlencode "topK=4" | jq '.recalled'
+curl -s -G http://localhost:8084/springai/v4/memory/chats/vec-demo \
+  --data-urlencode "query=What car do I drive?" --data-urlencode "topK=4" | jq
 ```
 
 ```text
