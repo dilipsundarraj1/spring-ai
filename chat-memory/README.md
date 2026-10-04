@@ -45,24 +45,30 @@
     - [Chat — `POST /v4/memory/chats/{conversationId}`](#chat--post-v4memorychatsconversationid)
     - [Recall — `GET /v4/memory/chats/{conversationId}?query=...`](#recall--get-v4memorychatsconversationidquery)
       - [Changing `topK` per call](#changing-topk-per-call)
-    - [Clear — `DELETE /v4/memory/chats/{conversationId}`](#clear--delete-v4memorychatsconversationid)
     - [Under the hood: how the advisor uses the VectorStore](#under-the-hood-how-the-advisor-uses-the-vectorstore)
       - [How conversations are stored](#how-conversations-are-stored)
       - [How conversations are retrieved](#how-conversations-are-retrieved)
+      - [The scheduler: only for streaming](#the-scheduler-only-for-streaming)
     - [Testing it: what semantic recall gets right, and what it does not](#testing-it-what-semantic-recall-gets-right-and-what-it-does-not)
+      - [Clear — `DELETE /v4/memory/chats/{conversationId}`](#clear--delete-v4memorychatsconversationid)
+    - [The honest summary](#the-honest-summary)
     - [Trade-offs](#trade-offs)
   - [Taking Control: Semantic Memory Without the Advisor](#taking-control-semantic-memory-without-the-advisor)
     - [The three steps the advisor was doing for you](#the-three-steps-the-advisor-was-doing-for-you)
     - [Filtering what comes back: scores and duplicates](#filtering-what-comes-back-scores-and-duplicates)
-    - [Seeing why a relevance floor is harder than it looks](#seeing-why-a-relevance-floor-is-harder-than-it-looks)
-    - [Try it](#try-it)
+    - [Endpoints](#endpoints)
+    - [Chat — `POST /v5/memory/chats/{conversationId}`](#chat--post-v5memorychatsconversationid)
+      - [Testing the `v5` chat](#testing-the-v5-chat)
+    - [Choosing a similarity threshold](#choosing-a-similarity-threshold)
+    - [Trade-offs of doing it by hand](#trade-offs-of-doing-it-by-hand)
+    - [What's next: Long-Term Memory](#whats-next-long-term-memory)
   - [Other Chat Memory Repositories](#other-chat-memory-repositories)
     - [VectorStoreChatMemoryAdvisor](#vectorstorechatmemoryadvisor)
   - [Limitations](#limitations)
   - [Migrating from older Spring AI versions](#migrating-from-older-spring-ai-versions)
   - [Running the module](#running-the-module)
-    - [Endpoints](#endpoints)
-    - [Try it](#try-it-1)
+    - [Endpoints](#endpoints-1)
+    - [Try it](#try-it)
     - [Tests](#tests)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -1560,18 +1566,6 @@ curl -X POST "http://localhost:8084/springai/v4/memory/chats/user-1?topK=6" \
   -H "Content-Type: application/json" -d '{"prompt":"What do you know about me?"}'
 ```
 
-### Clear — `DELETE /v4/memory/chats/{conversationId}`
-
-The advisor has no `clear()`, so the controller deletes straight from the store using the same metadata filter:
-
-```java
-vectorStore.delete(new FilterExpressionBuilder().eq("conversationId", conversationId).build());
-```
-
-```shell
-curl -i -X DELETE http://localhost:8084/springai/v4/memory/chats/user-1
-```
-
 ### Under the hood: how the advisor uses the VectorStore
 
 The advisor never talks to Postgres or the embedding model itself — every read and write goes through the
@@ -1676,12 +1670,48 @@ VectorStoreChatMemoryAdvisor.before()
 - **The results become text.** Each `Document` is rendered as `<memory-entry type="user|assistant">...</memory-entry>`
   inside `LONG_TERM_MEMORY` in the system message — see [What the advisor does on each call](#what-the-advisor-does-on-each-call).
 
+#### The scheduler: only for streaming
+
+The advisor's builder also takes a `scheduler`. It is used **only when you stream** (`.stream()`) — with `.call()`, as
+in `v4`, it is never touched.
+
+- **Why it exists.** `before()` blocks: it calls the embedding API and runs a JDBC `SELECT` and `INSERT`. In a
+  streaming pipeline that must not run on a Reactor event-loop thread, so the advisor moves it onto the scheduler first:
+
+  ```java
+  // VectorStoreChatMemoryAdvisor.adviseStream(...)
+  Mono.just(request)
+      .publishOn(scheduler)                                    // hop off the event loop
+      .map(r -> this.before(r, chain))                         // blocking: embed + SELECT + INSERT
+      .flatMapMany(chain::nextStream)                          // stream tokens from the LLM
+      .transform(flux -> aggregator.aggregateChatClientResponse(flux,
+              response -> this.after(response, chain)));       // store the full answer
+  ```
+
+- **Default:** `BaseAdvisor.DEFAULT_SCHEDULER` — `Schedulers.boundedElastic()`, Reactor's pool for blocking work.
+- **With `.call()`** the work runs on the caller's thread (Tomcat's, here), so the scheduler plays no part.
+- **When to set it:** to give memory work its own bounded pool, or to use virtual threads —
+  `.scheduler(Schedulers.fromExecutor(Executors.newVirtualThreadPerTaskExecutor()))`.
+
 ### Testing it: what semantic recall gets right, and what it does not
 
 Start clean, then plant a fact and bury it under unrelated chatter:
 
+
+#### Clear — `DELETE /v4/memory/chats/{conversationId}`
+
+The advisor has no `clear()`, so the controller deletes straight from the store using the same metadata filter:
+
+```java
+vectorStore.delete(new FilterExpressionBuilder().eq("conversationId", conversationId).build());
+```
+
 ```shell
-curl -s -X DELETE http://localhost:8084/springai/v4/memory/chats/vec-demo
+curl -i -X DELETE http://localhost:8084/springai/v4/memory/chats/user-1
+```
+
+
+```shell
 
 curl -s -X POST http://localhost:8084/springai/v4/memory/chats/vec-demo \
   -H "Content-Type: application/json" -d '{"prompt":"My name is Dilip and I drive a blue Tesla"}'
@@ -1744,11 +1774,14 @@ curl -X POST "http://localhost:8084/springai/v4/memory/chats/vec-demo?topK=2" \
 
 The fact is still in the database. The model was simply handed two copies of its own question instead of the answer.
 
-> **The honest summary of this endpoint.** It fixes recency — a fact from two hundred messages ago is reachable, which
-> no window can do. It does **not** give you relevance: with these embeddings, unrelated short messages score within a
-> few hundredths of related ones, so `topK` decides what arrives and meaning barely gets a vote. That is the gap
-> [v5](#taking-control-semantic-memory-without-the-advisor) measures and
-> [Long-Term Memory](docs/long-term-memory.md) is built to close.
+### The honest summary
+
+- **It fixes recency.** A fact from two hundred messages ago is still reachable — no window can do that.
+- **It does not give you relevance.** With these embeddings, unrelated short messages score within a few hundredths
+  of related ones.
+- **So `topK` decides what arrives**, and meaning barely gets a vote.
+- **Closing that gap is what comes next:** [v5](#taking-control-semantic-memory-without-the-advisor) measures it, and
+  [Long-Term Memory](docs/long-term-memory.md) is built to close it.
 
 ### Trade-offs
 
@@ -1763,11 +1796,9 @@ The fact is still in the database. The model was simply handed two copies of its
 - **Recall can miss.** A question phrased very differently from the stored message may not retrieve it at all, where
   a window would have included it unconditionally.
 - **It is not either/or.** A common production shape is both: `MessageChatMemoryAdvisor` for a short accurate window
-  of recent turns, plus this advisor for long-term recall.
+  of recent turns, plus `VectorStoreChatMemoryAdvisor` for long-term recall.
 
 ## Taking Control: Semantic Memory Without the Advisor
-
-**Endpoint:** `POST /v5/memory/chats/{conversationId}` — [`ManualVectorMemoryController`](src/main/java/com/llm/memory/ManualVectorMemoryController.java)
 
 `VectorStoreChatMemoryAdvisor` hides the retrieval step, and its builder exposes only four things:
 `systemPromptTemplate`, `defaultTopK`, `scheduler`, `order`. There is **no similarity threshold** — the advisor always
@@ -1782,7 +1813,7 @@ parameters, and every response reports what was recalled and at what score.
 
 ```java
 // 1. retrieve - filtered by score, de-duplicated, then trimmed to topK
-var memory = search(conversationId, userInput.prompt(), threshold, topK, relativeMargin, dedupe);
+var memory = search(conversationId, userInput.prompt(), threshold, topK, dedupe);
 
 // 2. build the system message ourselves, with our own wording
 var answer = chatClient.prompt()
@@ -1805,23 +1836,21 @@ remember(conversationId, MessageType.ASSISTANT, answer);
 
 ### Filtering what comes back: scores and duplicates
 
-Three knobs, all per-request, none of which `VectorStoreChatMemoryAdvisor` exposes:
+Two knobs, both per-request, neither of which `VectorStoreChatMemoryAdvisor` exposes:
 
-| Parameter | Default | What it does |
-|---|---|---|
-| `threshold` | `0.0` | Absolute similarity floor, passed to `SearchRequest.similarityThreshold(...)` — filtering happens **in the database**. |
-| `relativeMargin` | *(off)* | Keeps only hits scoring within this much of the **best** hit. Adapts to whatever band the embedding model produces. |
-| `dedupe` | `true` | Collapses repeated messages, keeping the highest-scoring copy. |
+| Parameter | Default | Layer | What it does | Example |
+|---|---|---|---|---|
+| `threshold` | `0.0` | **Database** — `WHERE` clause in `PgVectorStore`'s SQL | Absolute similarity floor, passed to `SearchRequest.similarityThreshold(...)`. | `0.80` → keeps hits scoring `≥ 0.80`, whatever the question |
+| `dedupe` | `true` | **Java** — controller, after the search returns | Collapses repeated messages, keeping the highest-scoring copy. | three copies of "What car do I drive?" → one |
 
 **De-duplication has to happen before `topK`.** If you fetch `topK` rows and *then* collapse them, the duplicates have
-already spent the budget. So the controller over-fetches, collapses, filters, and only then trims:
+already spent the budget. So the controller over-fetches, collapses, and only then trims:
 
 ```java
 int fetchSize = dedupe ? Math.min(topK * OVER_FETCH_FACTOR, MAX_FETCH) : topK;
 ...
-if (dedupe)               hits = removeDuplicates(hits);      // keeps the first = best-scoring copy
-if (relativeMargin != null) hits = withinMarginOfBest(hits, relativeMargin);
-if (hits.size() > topK)   hits = hits.subList(0, topK);
+if (dedupe)             hits = removeDuplicates(hits);      // keeps the first = best-scoring copy
+if (hits.size() > topK) hits = hits.subList(0, topK);
 ```
 
 Run against the demo conversation, asking *"What car do I drive?"* — a conversation that by now contains the same
@@ -1836,21 +1865,119 @@ curl -G http://localhost:8084/springai/v5/memory/chats/user-1 \
 |---|---|---|---|
 | `dedupe=false` | 20 | **20** | six identical copies of "What car do I drive?" at `0.8467` |
 | `dedupe=true` | 20 | **13** | one copy of the question, then the answers |
-| `dedupe=true&relativeMargin=0.05` | 20 | **3** | only what scores within `0.05` of the best hit |
 
-Two things to point out to students here:
+**De-duplication is the fix for the crowding problem**, not a bigger `topK`. The duplicates are *perfect* matches, so
+no amount of budget demotes them — they have to be removed.
 
-- **De-duplication is the fix for the crowding problem**, not a bigger `topK`. The duplicates are *perfect* matches, so
-  no amount of budget demotes them — they have to be removed.
-- **Aggressive filtering has its own failure mode.** At `relativeMargin=0.05` the three survivors include the
-  assistant's own earlier `"I don't know what car you drive"` (`0.8215`) while the user's original
-  `"My name is Dilip and I drive a blue Tesla"` (`0.7906`) is cut. A tight relative window keeps whatever *scores*
-  highest, which is not the same as whatever is *true*.
+### Endpoints
 
-That second point is the honest summary of this whole endpoint: these knobs give you control, not correctness. The
-retrieval is now visible and tunable — deciding what *should* come back is still a design problem.
+Both live in [`ManualVectorMemoryController`](src/main/java/com/llm/memory/ManualVectorMemoryController.java) and
+share one `search(...)`, so they always recall the same messages:
 
-### Seeing why a relevance floor is harder than it looks
+| Method | Path | What it does | Calls the LLM | Stores the Turn |
+|---|---|---|---|---|
+| `POST` | `/v5/memory/chats/{conversationId}` | [Chat](#chat--post-v5memorychatsconversationid) with hand-written memory; returns the answer **and** the recall report | yes | yes |
+| `GET` | `/v5/memory/chats/{conversationId}?query=...` | **Recall only** — the same search, so you can inspect what would be recalled before asking | no | no |
+
+Both take `threshold`, `topK` and `dedupe` as request parameters. The `GET` is a thin wrapper around the search:
+
+```java
+@GetMapping("/v5/memory/chats/{conversationId}")
+public RecallReport recall(@PathVariable String conversationId,
+                           @RequestParam String query,
+                           @RequestParam(defaultValue = "" + DEFAULT_SIMILARITY_THRESHOLD) double threshold,
+                           @RequestParam(defaultValue = "" + DEFAULT_TOP_K) int topK,
+                           @RequestParam(defaultValue = "true") boolean dedupe) {
+    return search(conversationId, query, threshold, topK, dedupe);
+}
+```
+
+It is used in [Choosing a similarity threshold](#choosing-a-similarity-threshold).
+
+### Chat — `POST /v5/memory/chats/{conversationId}`
+
+[`ManualVectorMemoryController`](src/main/java/com/llm/memory/ManualVectorMemoryController.java) — search and save, written by hand.
+
+**Search** — one `SearchRequest`, plus the two steps the advisor doesn't have (de-duplicate, then trim):
+
+```java
+private RecallReport search(String conversationId, String query, double threshold, int topK, boolean dedupe) {
+    // over-fetch so that de-duplication does not leave us short of topK
+    int fetchSize = dedupe ? Math.min(topK * OVER_FETCH_FACTOR, MAX_FETCH) : topK;
+
+    var searchRequest = SearchRequest.builder()
+            .query(query)
+            .topK(fetchSize)
+            .similarityThreshold(threshold)          // the line the advisor never lets you write
+            .filterExpression(conversationFilter(conversationId))
+            .build();
+
+    List<Document> documents = vectorStore.similaritySearch(searchRequest);
+    // results arrive ordered by score, best first
+    var hits = documents.stream()
+            .map(document -> RecalledMemory.from(document, MESSAGE_TYPE_METADATA))
+            .toList();
+
+    if (dedupe) hits = removeDuplicates(hits);
+    if (hits.size() > topK) hits = hits.subList(0, topK);
+
+    return new RecallReport(threshold, dedupe, topK, documents.size(), hits.size(), hits);
+}
+```
+
+- **`similarityThreshold(threshold)`** becomes the `WHERE embedding <=> ? < 1 - threshold` in `PgVectorStore`'s SQL.
+- **`conversationFilter(...)`** is the same metadata filter the advisor uses: `conversationId == '<id>'`.
+- **Over-fetching** (`topK × 3`, capped at 200) leaves room for `removeDuplicates` before trimming to `topK`.
+
+**Save** — the same `Document` shape the advisor writes, so `v4` and `v5` can read each other's messages:
+
+```java
+private void remember(String conversationId, MessageType messageType, String text) {
+    vectorStore.add(List.of(Document.builder()
+            .text(text)
+            .metadata(Map.of(CONVERSATION_ID_METADATA, conversationId,
+                             MESSAGE_TYPE_METADATA, messageType.name()))
+            .build()));
+}
+```
+
+- **Called twice per Turn** — once for the `USER` question, once for the `ASSISTANT` answer — and only **after** the
+  model replies, so a failed call never stores an unanswered question.
+- **`vectorStore.add(...)`** embeds the text and `INSERT`s the row — see
+  [How conversations are stored](#how-conversations-are-stored).
+
+#### Testing the `v5` chat
+
+Use a fresh conversation, so nothing from `v4` gets in the way:
+
+```shell
+# start clean (v4's DELETE works here too - same store, same metadata)
+curl -i -X DELETE http://localhost:8084/springai/v4/memory/chats/manual-1
+
+# plant a fact, then some unrelated chatter
+curl -s -X POST http://localhost:8084/springai/v5/memory/chats/manual-1 \
+  -H "Content-Type: application/json" -d '{"prompt":"My name is Dilip and I drive a blue Tesla"}' | jq
+
+curl -s -X POST http://localhost:8084/springai/v5/memory/chats/manual-1 \
+  -H "Content-Type: application/json" -d '{"prompt":"Tell me a joke about databases"}' | jq
+
+# ask about the fact - the answer comes back with what was recalled and at what score
+curl -s -X POST http://localhost:8084/springai/v5/memory/chats/manual-1 \
+  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}' | jq
+
+# the same question with a similarity floor - watch recalledCount drop
+curl -s -X POST "http://localhost:8084/springai/v5/memory/chats/manual-1?threshold=0.80" \
+  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}' | jq
+
+# ask it once more, then compare with and without de-duplication
+curl -s -X POST http://localhost:8084/springai/v5/memory/chats/manual-1 \
+  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}' | jq
+
+curl -s -X POST "http://localhost:8084/springai/v5/memory/chats/manual-1?dedupe=false" \
+  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}' | jq
+```
+
+### Choosing a similarity threshold
 
 The response carries the evidence, so no log reading is needed:
 
@@ -1864,7 +1991,6 @@ curl -s -X POST http://localhost:8084/springai/v5/memory/chats/user-1 \
   "answer": "You drive a blue Tesla.",
   "memory": {
     "similarityThreshold": 0.0,
-    "relativeMargin": null,
     "dedupe": true,
     "topK": 20,
     "fetchedFromStore": 20,
@@ -1880,60 +2006,62 @@ curl -s -X POST http://localhost:8084/springai/v5/memory/chats/user-1 \
 `fetchedFromStore` vs `recalledCount` is the whole story in two numbers: what the vector store returned, and what
 survived filtering.
 
-Or skip the LLM entirely and just look at the retrieval — no tokens spent:
+Now an **unrelated question**. Inspect it with the recall endpoint first — a `GET` that calls no LLM and stores
+nothing — then try a similarity floor:
 
 ```shell
-curl -G http://localhost:8084/springai/v5/memory/chats/user-1 \
-  --data-urlencode "query=What the weather?" --data-urlencode "threshold=0.0" | jq
+# what would be recalled for a question about something never discussed?
+curl -s -G http://localhost:8084/springai/v5/memory/chats/manual-1 \
+  --data-urlencode "query=What's the weather?" | jq
+
+# the same question with a floor - does anything get filtered out?
+curl -s -G http://localhost:8084/springai/v5/memory/chats/manual-1 \
+  --data-urlencode "query=What's the weather?" --data-urlencode "threshold=0.80" | jq
 ```
 
-**Now the lesson.** Run that against a conversation about cars, names and databases and the scores come back like this
-(real numbers from this module):
+**There is no universal right threshold.** Scores depend on the embedding model, the length of the messages, and the
+kind of conversations your application has. So treat the threshold as something you tune, not something you guess:
 
-| similarity | message |
-|---|---|
-| 0.9194 | `USER` What car do I drive? |
-| 0.8954 | `USER` I work as a software architect |
-| 0.8678 | `USER` My name is Dilip and I drive a blue Tesla |
-| 0.8542 | `USER` Tell me a joke about databases |
-| 0.8240 | `ASSISTANT` You drive a blue Tesla. |
-| 0.7970 | `ASSISTANT` Nice to meet you, Dilip. As a software architect… |
+- **Try it out.** Ask a few realistic questions — related and unrelated — through the recall endpoint and look at the
+  scores that come back.
+- **Find the line.** See where useful messages stop and noise begins for *your* data, and set `threshold` just below
+  the useful ones.
+- **Adjust as needs change.** A stricter threshold sends less noise but may drop something useful; a looser one
+  misses less but sends more noise. Pick based on what matters more to your application.
 
-Every message scores between **0.79 and 0.92** against a question about the *weather* — a topic that appears nowhere in
-the conversation. With OpenAI embeddings, two unrelated short English sentences are still far from orthogonal, so:
+`DEFAULT_SIMILARITY_THRESHOLD` is **0.0** — identical to the advisor — so you start from the same behaviour and raise
+it only once you have measured.
 
-- A threshold of `0.78` filters **nothing**.
-- A threshold of `0.87` would keep "What car do I drive?" (`0.9194`, a stored question carrying no information) and
-  throw away "You drive a blue Tesla" (`0.8240`, the actual answer).
+### Trade-offs of doing it by hand
 
-So the knob is real, but an **absolute cosine floor is a weak instrument for short chat messages** — the scores are
-compressed into a narrow band, and the ranking inside that band is not a reliable proxy for usefulness. That is worth
-knowing before you reach for it in production, where the usual answers are a relative cutoff (keep hits within *x* of
-the top score), a reranker, or simply not storing the questions in the first place.
+- **Full control, more code.** Retrieval, prompt and storage are yours — and so are the bugs. Forget `remember(...)`
+  and memory silently stops growing.
+- **The threshold is hard to tune.** Related and unrelated messages score close together, so one value rarely fits
+  every question.
+- **De-duplication only catches exact repeats.** "What car do I drive?" and "Which car do I own?" both survive.
+- **It still stores raw Turns.** Every question is saved next to its answer, so the store keeps filling with messages
+  that carry no information.
+- **The cost does not change.** One embedding for the search and one per stored message, on every Turn.
 
-`DEFAULT_SIMILARITY_THRESHOLD` is therefore **0.0** in this controller — identical to the advisor — so you start from
-the same behaviour and change one thing at a time.
+### What's next: Long-Term Memory
 
-### Try it
+Everything so far recalls either the **last N** messages (`v1`–`v3`) or the **nearest** raw messages (`v4`, `v5`).
+Neither knows what the conversation actually *established*.
 
-```shell
-# the advisor's behaviour, but with the retrieval visible
-curl -s -X POST http://localhost:8084/springai/v5/memory/chats/user-1 \
-  -H "Content-Type: application/json" -d '{"prompt":"What car do I drive?"}' | jq '.recalledCount, .answer'
+[Long-Term Memory](docs/long-term-memory.md) (`v6`) changes the unit that is stored, instead of tuning the search:
 
-# duplicates in, duplicates out
-curl -G http://localhost:8084/springai/v5/memory/chats/user-1 \
-  --data-urlencode "query=What car do I drive?" --data-urlencode "dedupe=false" | jq '.recalledCount'
-
-# collapse them, then keep only what scores near the best hit
-curl -G http://localhost:8084/springai/v5/memory/chats/user-1 \
-  --data-urlencode "query=What car do I drive?" --data-urlencode "relativeMargin=0.05" | jq
-
-# an unrelated question - how much does a floor actually exclude?
-curl -G http://localhost:8084/springai/v5/memory/chats/user-1 \
-  --data-urlencode "query=What is the weather?" --data-urlencode "threshold=0.0" | jq 'length'
-```
-
+- **Profile Facts** — keyed facts about the user, **replaced** when they change and always sent in full.
+  - **Keys:** a fixed set — `NAME`, `VEHICLE`, `OCCUPATION`, `LOCATION`.
+  - **The user says:** *"My name is Dilip and I drive a blue Tesla"* → `VEHICLE` = `"Dilip drives a blue Tesla"`.
+  - **Later:** *"I sold the Tesla, I drive a Honda Civic now"* → `VEHICLE` is **replaced** with
+    `"Dilip drives a Honda Civic"`.
+  - **Always sent in full**, so *"What car do I drive?"* gets the current answer, never the old one.
+- **Topic Summaries** — short notes on a subject that **accumulate** and are found by similarity search.
+  - **The user says:** *"I sold the Tesla, I drive a Honda Civic now"*.
+  - **The summary:** subject `Vehicle update` → `"…sold the Tesla and now drives a Honda Civic"`.
+  - **The fact:** `VEHICLE` now only knows the Honda.
+  - **The summary keeps the history**, so it can answer *"What happened with my car?"*.
+- **Chat History** — every raw Turn kept in an append-only archive, so the derived memory can be rebuilt.
 
 ---
 
@@ -2010,7 +2138,7 @@ export OPENAI_KEY=<your-key>
 | `POST` | `/springai/v4/memory/chats/{conversationId}` | Semantic memory in a vector store (`?topK=` to widen recall) |
 | `GET` | `/springai/v4/memory/chats/{conversationId}?query=...` | What the similarity search recalls for a question |
 | `DELETE` | `/springai/v4/memory/chats/{conversationId}` | Delete a conversation from the vector store |
-| `POST` | `/springai/v5/memory/chats/{conversationId}` | Semantic memory with the retrieval written by hand (`?threshold=`, `?topK=`, `?relativeMargin=`, `?dedupe=`) |
+| `POST` | `/springai/v5/memory/chats/{conversationId}` | Semantic memory with the retrieval written by hand (`?threshold=`, `?topK=`, `?dedupe=`) |
 | `GET` | `/springai/v5/memory/chats/{conversationId}?query=...` | The retrieval step alone, with similarity scores |
 
 ### Try it

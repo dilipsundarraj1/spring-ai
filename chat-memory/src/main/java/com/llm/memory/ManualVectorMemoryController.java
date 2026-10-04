@@ -31,8 +31,7 @@ import java.util.stream.Collectors;
 
 /**
  * Semantic chat memory without VectorStoreChatMemoryAdvisor. The retrieval is done here, so we
- * control the three things the advisor does not expose: a similarity threshold, a relative score
- * cut-off, and de-duplication. Every response reports what was recalled and at what score.
+ * control the two things the advisor does not expose: a similarity threshold and de-duplication. Every response reports what was recalled and at what score.
  */
 @RestController
 public class ManualVectorMemoryController {
@@ -88,17 +87,20 @@ public class ManualVectorMemoryController {
                                   @PathVariable String conversationId,
                                   @RequestParam(defaultValue = "" + DEFAULT_SIMILARITY_THRESHOLD) double threshold,
                                   @RequestParam(defaultValue = "" + DEFAULT_TOP_K) int topK,
-                                  @RequestParam(required = false) Double relativeMargin,
                                   @RequestParam(defaultValue = "true") boolean dedupe) {
-        log.info("conversationId : {} , threshold : {} , topK : {} , relativeMargin : {} , dedupe : {} , userInput : {}",
-                conversationId, threshold, topK, relativeMargin, dedupe, userInput);
+        log.info("conversationId : {} , threshold : {} , topK : {} , dedupe : {} , userInput : {}",
+                conversationId, threshold, topK, dedupe, userInput);
 
         // 1. retrieve - filtered by score, de-duplicated, then trimmed to topK
-        var memory = search(conversationId, userInput.prompt(), threshold, topK, relativeMargin, dedupe);
+        var memory = search(conversationId, userInput.prompt(), threshold, topK, dedupe);
 
         // 2. build the system message ourselves, with our own wording
+        var systemPrompt = INSTRUCTIONS + renderMemory(memory.recalled());
+        log.info("system prompt :\n{}", systemPrompt);
+        log.info("user prompt : {}", userInput.prompt());
+
         var answer = chatClient.prompt()
-                .system(INSTRUCTIONS + renderMemory(memory.recalled()))
+                .system(systemPrompt)
                 .user(userInput.prompt())
                 .call()
                 .content();
@@ -118,13 +120,12 @@ public class ManualVectorMemoryController {
                                @RequestParam String query,
                                @RequestParam(defaultValue = "" + DEFAULT_SIMILARITY_THRESHOLD) double threshold,
                                @RequestParam(defaultValue = "" + DEFAULT_TOP_K) int topK,
-                               @RequestParam(required = false) Double relativeMargin,
                                @RequestParam(defaultValue = "true") boolean dedupe) {
-        return search(conversationId, query, threshold, topK, relativeMargin, dedupe);
+        return search(conversationId, query, threshold, topK, dedupe);
     }
 
     private RecallReport search(String conversationId, String query, double threshold, int topK,
-                                @Nullable Double relativeMargin, boolean dedupe) {
+                                boolean dedupe) {
         // over-fetch so that de-duplication does not leave us short of topK
         int fetchSize = dedupe ? Math.min(topK * OVER_FETCH_FACTOR, MAX_FETCH) : topK;
 
@@ -149,14 +150,11 @@ public class ManualVectorMemoryController {
         if (dedupe) {
             hits = removeDuplicates(hits);
         }
-        if (relativeMargin != null) {
-            hits = withinMarginOfBest(hits, relativeMargin);
-        }
         if (hits.size() > topK) {
             hits = hits.subList(0, topK);
         }
 
-        return new RecallReport(threshold, relativeMargin, dedupe, topK, fetched, hits.size(), hits);
+        return new RecallReport(threshold, dedupe, topK, fetched, hits.size(), hits);
     }
 
     /**
@@ -170,20 +168,6 @@ public class ManualVectorMemoryController {
             unique.putIfAbsent(normalize(hit.text()), hit);
         }
         return new ArrayList<>(unique.values());
-    }
-
-    /**
-     * Keeps only the hits scoring within {@code margin} of the best hit. A relative cut-off works
-     * where an absolute one struggles: it adapts to whatever band this embedding model produces.
-     */
-    private static List<RecalledMemory> withinMarginOfBest(List<RecalledMemory> hits, double margin) {
-        if (hits.isEmpty() || hits.get(0).score() == null) {
-            return hits;
-        }
-        double best = hits.get(0).score();
-        return hits.stream()
-                .filter(hit -> hit.score() == null || hit.score() >= best - margin)
-                .toList();
     }
 
     private static String normalize(@Nullable String text) {

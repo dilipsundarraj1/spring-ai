@@ -7,7 +7,6 @@ import java.util.List;
  * store returned before filtering, and what survived.
  */
 public record RecallReport(double similarityThreshold,
-                           Double relativeMargin,
                            boolean dedupe,
                            int topK,
                            int fetchedFromStore,
