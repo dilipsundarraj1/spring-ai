@@ -993,7 +993,7 @@ curl -X POST http://localhost:8084/springai/v2/memory/chats/jdbc-2 \
 > `max-messages` rows, and the evicted Turn is **`DELETE`d from Postgres** — `MessageWindowChatMemory` trims the repository
 > itself, so the database holds the *window*, not the conversation. Students reasonably assume "it is in a database, so
 > it is kept"; these three `count(*)` queries are the fastest way to show that it is not. If you want an archive, you
-> have to write one — which is what [Long-Term Memory](docs/long-term-memory.md) does with its `chat_history` table.
+> have to write one — which is what [Long-Term Memory](docs/ai_memory.md) does with its `chat_history` table.
 
 > **Neutral filler again.** As in `v1`, chatty filler like *"I live in Dallas"* makes the assistant reply *"Got it,
 > Dilip — you drive a blue Tesla"*, which puts the fact back into the window and stops the demo failing. Arithmetic and
@@ -1614,8 +1614,13 @@ sequenceDiagram
 
 #### How conversations are stored
 
-Each `USER` and `ASSISTANT` message becomes **one row** in `chat_memory_vector_store`. The advisor never embeds
-anything — it hands plain-text `Document`s to the `VectorStore`, and `PgVectorStore` calls the embedding model:
+Every Turn adds **two separate rows** to `chat_memory_vector_store`:
+
+- **The user's question** — written in `before()`, as one row with `messageType = USER`.
+- **The assistant's answer** — written in `after()`, as another row with `messageType = ASSISTANT`.
+
+The advisor doesn't call the embedding model itself — it hands plain-text `Document`s to the `VectorStore`, and
+`PgVectorStore` embeds each one before the `INSERT`:
 
 ```text
 VectorStoreChatMemoryAdvisor.before() / after()
@@ -1781,7 +1786,7 @@ The fact is still in the database. The model was simply handed two copies of its
   of related ones.
 - **So `topK` decides what arrives**, and meaning barely gets a vote.
 - **Closing that gap is what comes next:** [v5](#taking-control-semantic-memory-without-the-advisor) measures it, and
-  [Long-Term Memory](docs/long-term-memory.md) is built to close it.
+  [Long-Term Memory](docs/ai_memory.md) is built to close it.
 
 ### Trade-offs
 
@@ -1806,8 +1811,8 @@ builds a `SearchRequest` with the default `SIMILARITY_THRESHOLD_ACCEPT_ALL = 0.0
 and `topK` alone decides how many arrive.
 
 That is why an unrelated question still drags in the whole conversation. This endpoint does the same job with the
-retrieval written out by hand, so the two knobs that matter — **`topK` and `similarityThreshold`** — are per-request
-parameters, and every response reports what was recalled and at what score.
+retrieval written out by hand, so the three knobs that matter — **`topK`, `similarityThreshold` and `dedupe`** — are
+per-request parameters, and every response reports what was recalled and at what score.
 
 ### The three steps the advisor was doing for you
 
@@ -2048,7 +2053,7 @@ it only once you have measured.
 Everything so far recalls either the **last N** messages (`v1`–`v3`) or the **nearest** raw messages (`v4`, `v5`).
 Neither knows what the conversation actually *established*.
 
-[Long-Term Memory](docs/long-term-memory.md) (`v6`) changes the unit that is stored, instead of tuning the search:
+[Long-Term Memory](docs/ai_memory.md) (`v6`) changes the unit that is stored, instead of tuning the search:
 
 - **Profile Facts** — keyed facts about the user, **replaced** when they change and always sent in full.
   - **Keys:** a fixed set — `NAME`, `VEHICLE`, `OCCUPATION`, `LOCATION`.

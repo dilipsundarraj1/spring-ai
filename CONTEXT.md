@@ -22,8 +22,27 @@ _Avoid_: memory, log
 
 **Long-Term Memory**:
 The durable store of Profile Facts and Topic Summaries. Unlike Chat History it is sent to the model, and unlike
-Chat Memory it is never trimmed.
-_Avoid_: vector memory, semantic memory
+Chat Memory it is never trimmed. Holds two kinds: Semantic Memory and Episodic Memory.
+_Avoid_: vector memory
+
+**Semantic Memory**:
+The facts kind of Long-Term Memory: current truths about the person, replaced when they change. Implemented as
+Profile Facts. Not the "semantic" of semantic search, which is a way of retrieving, not a kind of memory.
+_Avoid_: vector memory, semantic recall
+
+**Episodic Memory**:
+The events kind of Long-Term Memory: what happened, in context. Accumulates. Implemented as Topic Summaries.
+_Avoid_: history, log
+
+**Procedural Memory**:
+Written procedures that tell the assistant how to handle a kind of request. Authored by people, not learned from
+conversations. Not built in this module.
+_Avoid_: rules, playbook
+
+**Session State**:
+Structured, non-message data about one conversation (current step, selections), scoped by Conversation ID.
+Not built as its own store in this module.
+_Avoid_: session memory, context
 
 **Profile Fact**:
 A short keyed assertion about the person, derived from Turns rather than quoted from them. One per key, replaced

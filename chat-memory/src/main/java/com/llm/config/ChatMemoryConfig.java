@@ -19,10 +19,10 @@ import org.springframework.context.annotation.Configuration;
  * only be changed by publishing a ChatMemory bean - which is exactly what this does. The
  * auto-configured one then backs off.
  * <p>
- * <strong>This affects v2 (JDBC) and v3 (ChatModel)</strong>, the two controllers that inject
- * {@code ChatMemory}. v1 and v6 deliberately build their own, so they are unaffected: v1 to keep an
- * in-memory repository while the auto-configured bean is JDBC-backed, v6 because its window has to
- * consolidate on eviction.
+ * <strong>This affects v2 (JDBC), v3 (ChatModel) and v6 (episodic)</strong>, the controllers that inject
+ * {@code ChatMemory}. For v6 it also bounds what an episode can cover: the summary is written from the
+ * messages still in the window when the conversation ends. v1 deliberately builds its own, to keep an
+ * in-memory repository while the auto-configured bean is JDBC-backed.
  * <p>
  * Once enabled it is tunable without recompiling, which is useful in a lecture - drop it to 6 to make
  * eviction happen after three Turns instead of ten:
