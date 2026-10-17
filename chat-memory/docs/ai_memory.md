@@ -28,14 +28,15 @@
       - [Endpoints](#endpoints)
         - [Chat: `POST /v6/memory/users/{userId}/chats/{conversationId}`](#chat-post-v6memoryusersuseridchatsconversationid)
         - [End: `POST /v6/memory/users/{userId}/chats/{conversationId}/end`](#end-post-v6memoryusersuseridchatsconversationidend)
-        - [Recall: `GET /v6/memory/users/{userId}/episodes?query=...`](#recall-get-v6memoryusersuseridepisodesquery)
-        - [Forget: `DELETE /v6/memory/users/{userId}/episodes`](#forget-delete-v6memoryusersuseridepisodes)
       - [The files](#the-files)
       - [The episode store](#the-episode-store)
       - [Ending a conversation](#ending-a-conversation)
       - [Chatting with episodes](#chatting-with-episodes)
-      - [Testing it](#testing-it)
+      - [Recall: `GET /v6/memory/users/{userId}/episodes?query=...`](#recall-get-v6memoryusersuseridepisodesquery)
+      - [Forget: `DELETE /v6/memory/users/{userId}/episodes`](#forget-delete-v6memoryusersuseridepisodes)
       - [Trade-offs](#trade-offs)
+      - [Trying it in a chat UI](#trying-it-in-a-chat-ui)
+      - [Testing it](#testing-it)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -581,54 +582,6 @@ sequenceDiagram
     end
 ```
 
-##### Recall: `GET /v6/memory/users/{userId}/episodes?query=...`
-
-Step 1 of the chat endpoint on its own: the **same** `search(...)` call, with no chat-model call afterwards. Use it
-to see which episodes a question would recall — and at what score — without paying for an answer.
-
-1. **Search.** The store embeds `query`, filters by `userId` and `recentDays`, and keeps the `topK` closest.
-2. **Respond** with the episodes, each with its similarity `score`. An empty list means nothing qualified.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor C as Client
-    participant API as EpisodicMemoryController
-    participant ST as EpisodicMemoryStore
-    participant EM as episodic_memory<br/>(vector table)
-
-    C->>API: GET .../users/dilip/episodes?query=brake noise
-    API->>ST: search(userId, query, recentDays, topK)
-    ST->>EM: embed the query, filter userId + endedAt,<br/>rank by similarity, keep topK
-    EM-->>ST: matching episodes
-    ST-->>API: List<Episode>
-    API-->>C: 200 [episodes with scores]
-```
-
-##### Forget: `DELETE /v6/memory/users/{userId}/episodes`
-
-Deletes **every** episode of the user. It is here to reset a demo; in a real product it is the "forget me" request.
-
-1. **Delete.** The store deletes the rows of `episodic_memory` whose `userId` matches. Nothing is embedded and no
-   model is called.
-2. **Respond** with `204 No Content`.
-
-It touches episodes only. Conversation memory in `SPRING_AI_CHAT_MEMORY` is cleared by `/end`, not here.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor C as Client
-    participant API as EpisodicMemoryController
-    participant ST as EpisodicMemoryStore
-    participant EM as episodic_memory<br/>(vector table)
-
-    C->>API: DELETE .../users/dilip/episodes
-    API->>ST: deleteAll(userId)
-    ST->>EM: delete every row where userId = dilip
-    API-->>C: 204 No Content
-```
-
 #### The files
 
 | File | Role |
@@ -801,6 +754,149 @@ USER       What did we decide about the brake noise yesterday?
 - **Conversation memory** — this conversation — arrives as **real user and assistant messages**, added by the
   advisor. In a brand-new conversation there are none yet.
 
+#### Recall: `GET /v6/memory/users/{userId}/episodes?query=...`
+
+Step 1 of the chat endpoint on its own: the **same** `search(...)` call, with no chat-model call afterwards. Use it
+to see which episodes a question would recall — and at what score — without paying for an answer.
+
+1. **Search.** The store embeds `query`, filters by `userId` and `recentDays`, and keeps the `topK` closest.
+2. **Respond** with the episodes, each with its similarity `score`. An empty list means nothing qualified.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client
+    participant API as EpisodicMemoryController
+    participant ST as EpisodicMemoryStore
+    participant EM as episodic_memory<br/>(vector table)
+
+    C->>API: GET .../users/dilip/episodes?query=brake noise
+    API->>ST: search(userId, query, recentDays, topK)
+    ST->>EM: embed the query, filter userId + endedAt,<br/>rank by similarity, keep topK
+    EM-->>ST: matching episodes
+    ST-->>API: List<Episode>
+    API-->>C: 200 [episodes with scores]
+```
+
+#### Forget: `DELETE /v6/memory/users/{userId}/episodes`
+
+Deletes **every** episode of the user. It is here to reset a demo; in a real product it is the "forget me" request.
+
+1. **Delete.** The store deletes the rows of `episodic_memory` whose `userId` matches. Nothing is embedded and no
+   model is called.
+2. **Respond** with `204 No Content`.
+
+It touches episodes only. Conversation memory in `SPRING_AI_CHAT_MEMORY` is cleared by `/end`, not here.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client
+    participant API as EpisodicMemoryController
+    participant ST as EpisodicMemoryStore
+    participant EM as episodic_memory<br/>(vector table)
+
+    C->>API: DELETE .../users/dilip/episodes
+    API->>ST: deleteAll(userId)
+    ST->>EM: delete every row where userId = dilip
+    API-->>C: 204 No Content
+```
+
+#### Trade-offs
+
+- **No end, no episode.** If the client never calls `/end`, the conversation is never remembered. The idle timeout
+  from the options table is the usual safety net.
+- **An episode covers only what is still in the window.** The summary is written from conversation memory, which
+  keeps the last 20 messages. A longer conversation loses its beginning before it is summarised.
+- **The summary is a judgement call.** A model decides what mattered. It can leave out a detail, and the same
+  conversation can be summarised differently on two runs.
+- **One extra LLM call per conversation**, plus one embedding when the episode is saved and one per question when
+  episodes are searched.
+- **Similarity still ranks loosely.** The recency filter narrows the field, but an unrelated question still gets the
+  top 3 of what is left. `v5`'s similarity-threshold lesson applies here too.
+- **Episodes are user text in the system message.** They are summaries of what the person said, and they are
+  replayed in every later conversation. The instructions mark them as records, not instructions — that reduces the
+  risk of a stored prompt injection; it does not remove it.
+- **Dates are UTC.** `endedOn` is the UTC date, so a conversation late in the evening in Dallas can be stored as the
+  next day.
+
+#### Trying it in a chat UI
+
+The curls show each endpoint on its own. To see the whole cycle on one screen, the module ships a small chat page:
+**<http://localhost:8084/springai/>**
+
+- **It is one file**, `src/main/resources/static/index.html`: HTML, a little CSS and plain JavaScript. No React, no
+  build step, no new dependency.
+- **Spring Boot serves it as is.** Anything in `static/` is served from the context root, and `index.html` is the
+  welcome page.
+- **It adds no Java code.** Every button calls one of the four `v6` endpoints above — the same requests as the curls.
+
+| On screen | Endpoint it calls |
+|---|---|
+| **Send** | `POST /v6/memory/users/{userId}/chats/{conversationId}` |
+| **End conversation** | `POST /v6/memory/users/{userId}/chats/{conversationId}/end` |
+| **Search episodes** (with `days` and `top`) | `GET /v6/memory/users/{userId}/episodes?query=...` |
+| **Forget all episodes** | `DELETE /v6/memory/users/{userId}/episodes` |
+| **New chat** | none — it only switches to the next conversation id |
+
+The **memory panel** on the right shows what the curls print with `jq`:
+
+- **Recalled for the last answer** — the `recalledEpisodes` of the last chat response, with their scores.
+- **Last episode written** — the episode `/end` returned (`201`), or *"Nothing worth remembering"* (`204`).
+- **Last request** — the method, path and status of the last call, so each click can be matched to its curl.
+
+**Conversation IDs** are `conv-1`, `conv-2`, …
+
+- **New chat** moves to the next one. It calls no endpoint, so the old conversation is **not** summarised: its
+  messages stay in `SPRING_AI_CHAT_MEMORY` and no episode is written. Use it for conversations you do not want
+  remembered.
+- **End conversation** writes the episode and closes the conversation; the page takes no more messages until you
+  press **New chat**.
+- The page remembers the number in the browser, so a reload continues with a new conversation instead of reusing
+  an old one.
+
+**The demo, end to end.** The questions use relative dates (*"next Saturday"*, *"next Tuesday"*), so they work
+whenever you record. Every episode is stamped with the day it ended, so all of them will carry the recording date —
+which is also why the recall questions avoid *"yesterday"*.
+
+> **Note:** the assistant has no booking system. When it is asked to book an appointment it may answer that it has
+> noted the request, or that it cannot book. The episode then records a *requested* appointment rather than a
+> confirmed one — recall works the same either way.
+
+**Step 1 — Clean start.** Press **Forget all episodes**.
+
+**Step 2 — Create the episodes.** One conversation per row. Send the messages in order, then press
+**End conversation**, then **New chat** for the next row.
+
+| Conversation | Messages to send | After **End conversation** |
+|---|---|---|
+| `conv-1` — brakes | 1. *My Civic makes a grinding noise when I brake.*<br/>2. *Book the appointment for next Saturday at 9 am at the Plano branch.* | `201` — an episode about the brake noise and the appointment |
+| `conv-2` — oil change | 1. *My Civic is at about 35,000 miles and due for an oil change.*<br/>2. *Let's go with synthetic oil. I'll bring it in next Tuesday at 5:30 pm.* | `201` — an episode about the oil change |
+| `conv-3` — warning light | 1. *The tire pressure warning light came on this morning.*<br/>2. *The front left tire looked low, so I filled it at a gas station and the light went off.* | `201` — an episode about the tire, already fixed |
+| `conv-4` — small talk | 1. *Hi, how are you?*<br/>2. *Thanks, just checking in.* | `204` — *Nothing worth remembering* |
+
+**Step 3 — Recall them.** Press **New chat**, then ask these in the new conversation. Watch *Recalled for the last
+answer* after each one.
+
+| Question | What to point out |
+|---|---|
+| *What did we decide about the brake noise?* | The brake episode is recalled with the highest score. The new conversation has no messages of its own yet, so the answer can only come from the episode. |
+| *When is my oil change, and what oil did I choose?* | A different episode wins: recall follows the question. |
+| *Is anything still wrong with my tires?* | The tire episode answers it: the problem was already fixed. |
+| *What appointments do I have coming up?* | Several episodes are recalled together: brakes **and** oil change. |
+| *Did I ever mention a problem with my air conditioning?* | Nothing matches, yet three episodes are still recalled — similarity ranks, it does not judge. The model has to say no. |
+
+**Step 4 — Search without the LLM.** In *Search episodes*:
+
+| Search | What to point out |
+|---|---|
+| *brake noise* | The brake episode scores highest. |
+| *weather* | Episodes still come back, with lower scores. |
+| *brake noise* with `days` set to `0` | Nothing qualifies: the recency filter runs **before** the ranking. |
+
+**Step 5 — Forget.** Press **Forget all episodes**, press **New chat**, and ask *What did we decide about the brake
+noise?* again. Nothing is recalled, and the assistant has no memory of it.
+
 #### Testing it
 
 Start Postgres and the application as for the other endpoints. The episode text you get back will be worded
@@ -860,21 +956,3 @@ FROM episodic_memory
 WHERE metadata->>'userId' = 'dilip'
 ORDER BY (metadata->>'endedAt')::bigint;
 ```
-
-#### Trade-offs
-
-- **No end, no episode.** If the client never calls `/end`, the conversation is never remembered. The idle timeout
-  from the options table is the usual safety net.
-- **An episode covers only what is still in the window.** The summary is written from conversation memory, which
-  keeps the last 20 messages. A longer conversation loses its beginning before it is summarised.
-- **The summary is a judgement call.** A model decides what mattered. It can leave out a detail, and the same
-  conversation can be summarised differently on two runs.
-- **One extra LLM call per conversation**, plus one embedding when the episode is saved and one per question when
-  episodes are searched.
-- **Similarity still ranks loosely.** The recency filter narrows the field, but an unrelated question still gets the
-  top 3 of what is left. `v5`'s similarity-threshold lesson applies here too.
-- **Episodes are user text in the system message.** They are summaries of what the person said, and they are
-  replayed in every later conversation. The instructions mark them as records, not instructions — that reduces the
-  risk of a stored prompt injection; it does not remove it.
-- **Dates are UTC.** `endedOn` is the UTC date, so a conversation late in the evening in Dallas can be stored as the
-  next day.
