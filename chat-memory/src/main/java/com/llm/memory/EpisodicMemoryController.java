@@ -150,7 +150,7 @@ public class EpisodicMemoryController {
         return ResponseEntity.noContent().build();
     }
 
-    private static String renderEpisodes(List<Episode> episodes) {
+    static String renderEpisodes(List<Episode> episodes) {
         if (episodes.isEmpty()) {
             return "\nPAST_EPISODES: (none)\n";
         }

@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  Car-service assistant: a plain page over the v6 episodic memory endpoints.
+  Car-service assistant: a plain page over the v6 (episodic) and v7 (episodic + semantic) memory endpoints.
   No framework, no build step - Spring Boot serves everything in static/, and every button below
   is one of the curls from docs/ai_memory.md.
 -->
@@ -34,8 +34,8 @@
                   display: flex; flex-direction: column; min-height: 0; }
         h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
              margin: 0 0 8px; }
-        input, button { font: inherit; color: inherit; }
-        input { padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+        input, select, button { font: inherit; color: inherit; }
+        input, select { padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
         button { padding: 7px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg);
                  cursor: pointer; }
         button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -62,13 +62,24 @@
         .empty { color: var(--muted); font-size: 14px; font-style: italic; }
         .row { display: flex; gap: 6px; flex-wrap: wrap; }
         .row input[type=number] { width: 70px; }
+        .profile { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 14px; }
+        .profile dt { color: var(--muted); }
+        .profile dd { margin: 0; }
+        .profile dd.changed { color: var(--ok); font-weight: 600; }
+        .profile dd.changed::after { content: "  ← just saved"; font-weight: normal; font-size: 12px; }
+        .v7-only { display: none; }
+        body.v7 .v7-only { display: block; }
         #last-call { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted);
                      word-break: break-all; }
     </style>
 </head>
 <body>
 <header>
-    <h1>🚗 Car-Service Assistant <span style="color: var(--muted); font-weight: normal">· episodic memory (v6)</span></h1>
+    <h1>🚗 Car-Service Assistant</h1>
+    <select id="version" title="which memory the assistant uses">
+        <option value="v6">v6 · episodic</option>
+        <option value="v7">v7 · episodic + semantic</option>
+    </select>
     <label>user <input id="user-id" value="dilip" size="8"></label>
     <span class="tag" id="conversation-id"></span>
     <button id="new-button">New chat</button>
@@ -85,6 +96,11 @@
     </section>
 
     <section id="memory">
+        <div class="v7-only">
+            <h2>Profile <span style="text-transform: none">(semantic memory)</span></h2>
+            <dl class="profile" id="profile"></dl>
+            <button class="danger" id="forget-profile-button" style="margin-top: 8px">Forget profile</button>
+        </div>
         <div>
             <h2>Recalled for the last answer</h2>
             <div id="recalled"><p class="empty">Send a message to see which episodes are recalled.</p></div>
@@ -123,7 +139,16 @@
     let conversationNumber = (Number(read('episodic-demo.conversation')) || 0) + 1;
     write('episodic-demo.conversation', conversationNumber);
     let ended = false;
+    let profile = null;
     showConversation();
+
+    // v6: episodic memory only. v7: the same, plus the profile - written by the model through a tool.
+    // End, search and forget-episodes are the same in both, so they always call the v6 endpoints.
+    const version = () => $('version').value;
+    $('version').value = read('episodic-demo.version') === 'v7' ? 'v7' : 'v6';
+    showVersion();
+    $('version').addEventListener('change', () => { write('episodic-demo.version', version()); showVersion(); });
+    $('user-id').addEventListener('change', () => { if (version() === 'v7') loadProfile(); });
 
     // every call goes through here, so the panel can show which endpoint each button used
     async function call(method, path, body) {
@@ -138,16 +163,17 @@
         return response.status === 204 ? null : response.json();
     }
 
-    // POST /v6/memory/users/{userId}/chats/{conversationId}
+    // POST /v6 or /v7/memory/users/{userId}/chats/{conversationId}
     $('chat-form').addEventListener('submit', async event => {
         event.preventDefault();
         const prompt = $('prompt').value.trim();
         $('prompt').value = '';
         addMessage('user', prompt);
         await busy($('send-button'), async () => {
-            const result = await call('POST', `v6/memory/users/${userId()}/chats/${conversationId()}`, { prompt });
+            const result = await call('POST', `${version()}/memory/users/${userId()}/chats/${conversationId()}`, { prompt });
             addMessage('assistant', result.answer);
             renderEpisodes($('recalled'), result.recalledEpisodes, 'No episode was recalled.');
+            if (result.profile) renderProfile(result.profile);
         });
     });
 
@@ -189,6 +215,46 @@
             renderEpisodes($('written'), [], 'All episodes forgotten.');
         });
     });
+
+    // DELETE /v7/memory/users/{userId}/profile
+    $('forget-profile-button').addEventListener('click', () => {
+        if (!confirm(`Forget the profile of "${$('user-id').value}"?`)) return;
+        busy($('forget-profile-button'), async () => {
+            await call('DELETE', `v7/memory/users/${userId()}/profile`);
+            profile = null;
+            await loadProfile();
+        });
+    });
+
+    function showVersion() {
+        document.body.classList.toggle('v7', version() === 'v7');
+        if (version() === 'v7') loadProfile();
+    }
+
+    // GET /v7/memory/users/{userId}/profile
+    async function loadProfile() {
+        profile = null;
+        try {
+            renderProfile(await call('GET', `v7/memory/users/${userId()}/profile`));
+        } catch (error) {
+            addMessage('error', `Request failed: ${error.message}. Check the application log.`);
+        }
+    }
+
+    // fields that differ from the previous render are highlighted: the model just saved them
+    function renderProfile(next) {
+        const fields = [['name', 'name'], ['vehicle', 'vehicle'], ['homeBranch', 'home branch'],
+                        ['contactPreference', 'contact preference']];
+        $('profile').replaceChildren(...fields.flatMap(([key, label]) => {
+            const term = document.createElement('dt');
+            term.textContent = label;
+            const value = document.createElement('dd');
+            value.textContent = next[key] ?? '—';
+            if (profile && next[key] && next[key] !== profile[key]) value.className = 'changed';
+            return [term, value];
+        }));
+        profile = next;
+    }
 
     function showConversation() {
         $('conversation-id').textContent = conversationId();

@@ -4,7 +4,9 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
+import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.model.tool.ToolCallingChatOptions;
 
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -24,6 +26,14 @@ public class RecordingChatModel implements ChatModel {
     }
 
     /**
+     * Tool-calling options, like a real chat model's - otherwise ChatClient drops the tools before the call.
+     */
+    @Override
+    public ChatOptions getOptions() {
+        return ToolCallingChatOptions.builder().build();
+    }
+
+    /**
      * Messages of the most recent prompt, rendered as "TYPE: text".
      */
     public List<String> lastPromptMessages() {
@@ -32,6 +42,10 @@ public class RecordingChatModel implements ChatModel {
                 .stream()
                 .map(message -> message.getMessageType() + ": " + message.getText())
                 .toList();
+    }
+
+    public Prompt lastPrompt() {
+        return prompts.getLast();
     }
 
     public void reset() {
