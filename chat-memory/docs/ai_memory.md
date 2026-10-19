@@ -55,6 +55,27 @@
       - [Trying it in the chat UI](#trying-it-in-the-chat-ui)
       - [Forget: `DELETE /v7/memory/users/{userId}/profile`](#forget-delete-v7memoryusersuseridprofile)
       - [Testing it with curl](#testing-it-with-curl)
+    - [Procedural memory: the concepts](#procedural-memory-the-concepts)
+      - [What to store: procedures as files](#what-to-store-procedures-as-files)
+      - [Who writes it: people, not the model](#who-writes-it-people-not-the-model)
+      - [How to find it: an index, then load on demand](#how-to-find-it-an-index-then-load-on-demand)
+      - [Human in the loop: recommend, then ask](#human-in-the-loop-recommend-then-ask)
+      - [The flow](#the-flow-2)
+    - [Procedural memory: the implementation (`v8`)](#procedural-memory-the-implementation-v8)
+      - [Endpoints](#endpoints-2)
+        - [Chat: `POST /v8/memory/users/{userId}/chats/{conversationId}`](#chat-post-v8memoryusersuseridchatsconversationid)
+          - [The system prompt](#the-system-prompt-1)
+      - [The procedure library](#the-procedure-library)
+      - [The `loadProcedure` tool](#the-loadprocedure-tool)
+      - [The files](#the-files-2)
+      - [Chatting with procedures](#chatting-with-procedures)
+      - [How human in the loop is implemented](#how-human-in-the-loop-is-implemented)
+        - [On the server: two instructions and the conversation memory](#on-the-server-two-instructions-and-the-conversation-memory)
+        - [In the UI: when the buttons appear](#in-the-ui-when-the-buttons-appear)
+      - [Trade-offs](#trade-offs-2)
+      - [Beyond this course: procedures that run tools](#beyond-this-course-procedures-that-run-tools)
+      - [Trying it in the chat UI](#trying-it-in-the-chat-ui-1)
+      - [Testing it with curl](#testing-it-with-curl-1)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -338,16 +359,26 @@ can store semantic memory without ever running a search.
 **Scenario.** Brake complaints come in every day, and the dealership has rules for them. The assistant should not
 improvise; it should follow the procedure.
 
-```yaml
-procedure: brake-complaint
-steps:
-  - look up the vehicle and its warranty
-  - if the vehicle is under 3 years old, offer a free inspection
-  - otherwise, book a paid inspection at the standard rate
-  - if the customer reports the car is unsafe to drive, escalate to a human advisor
-constraints:
-  - never quote a repair price before the inspection
-  - never promise a free repair without warranty confirmation
+```markdown
+---
+name: brake-complaint
+description: The person reports a brake problem - grinding, squealing, a soft pedal, or the car pulling when braking.
+---
+# Brake complaint
+
+1. If the person says the car is unsafe to drive - the pedal sinks to the floor, or the brakes fail - tell them
+   not to drive it and offer a free tow. Do this before anything else.
+2. Check PAST_EPISODES for an earlier brake report. If there is one, say so and treat it as a repeat complaint:
+   offer the earliest available slot, and the inspection is free.
+3. Use the vehicle and home branch from the PROFILE. Ask only for what is missing.
+4. Recommend the next steps - a brake inspection, with the vehicle, branch and time - and ask the person to
+   approve them with a yes or no. Do not book yet.
+5. Only after a yes: book the brake inspection and confirm it the way the person's contact preference allows.
+   After a no: do not book; ask what they would like to change.
+
+Rules:
+- Never quote a repair price before the inspection.
+- Never promise a free repair. Only the inspection can be free.
 ```
 
 Procedural memory is **how to do things**, not what happened or what is true. It is written by people, not learned from
@@ -1462,4 +1493,576 @@ To look at the table directly:
 
 ```sql
 SELECT * FROM user_profile WHERE user_id = 'dilip';
+```
+
+### Procedural memory: the concepts
+
+Episodic and semantic memory are about **the person** — what happened, what is true. Procedural memory is about
+**the business**: how the dealership handles a brake complaint, an oil change, a warning light. Without it, the
+assistant improvises — it might quote a price or promise a free repair. With it, it follows the dealership's steps.
+
+| Decision | The question | Episodic (`v6`) | Semantic (`v7`) | Procedural (`v8`) |
+|---|---|---|---|---|
+| **What to store** | what exactly do we save? | a dated summary of a conversation | a fact in a profile | the **steps and rules** for one kind of request |
+| **Who writes it** | where does it come from? | our code, after the conversation | the model, during the conversation | **people** — the dealership's staff |
+| **How to find it** | how does it reach the answer? | similarity search | a lookup by user id | the model **loads** the one that matches, through a tool |
+
+#### What to store: procedures as files
+
+- **One Markdown file per kind of request**, in `src/main/resources/procedures/`: `brake-complaint.md`,
+  `oil-change.md`, `warning-light.md`.
+- **A short header, then the steps.** The header holds a `name` and a one-line `description`; the body holds the
+  numbered steps and the rules.
+- **Read-only.** The application never changes them. A new rule is a change to the file, reviewed and deployed like
+  code.
+
+```markdown
+---
+name: oil-change
+description: The person wants an oil change, or asks when their next oil change is due.
+---
+# Oil change
+
+1. Use the vehicle and home branch from the PROFILE. Ask only for what is missing.
+2. Check PAST_EPISODES for an earlier oil change. If there is one, mention when it was.
+...
+Rules:
+- Prices: conventional $49, synthetic $89. Quote no other price.
+```
+
+**The procedures use the other memories.** Look at the steps: *the vehicle and home branch from the PROFILE* is
+semantic memory; *check PAST_EPISODES for an earlier oil change* is episodic memory. The procedure decides **what to
+do**; the other memories supply **who it is for** and **what happened before**. That is why `v8` is built on `v7`.
+
+| Procedure | Uses the profile (`v7`) | Uses past episodes (`v6`) |
+|---|---|---|
+| `brake-complaint` | vehicle, home branch, contact preference | an earlier brake report makes it a repeat complaint: earliest slot, free inspection |
+| `oil-change` | vehicle, home branch, contact preference | mentions the last oil change |
+| `warning-light` | home branch | the same light reported before → book a diagnostic |
+
+#### Who writes it: people, not the model
+
+| Option | How it works | Trade-off |
+|---|---|---|
+| **Written by people** ✅ | staff write the procedures; the assistant only reads them | predictable and reviewable; changing a rule needs a deploy |
+| **Learned by the assistant** | the assistant rewrites its own instructions from feedback (*"you should not have quoted a price"*) | adapts on its own, but the model edits its own rules — hard to review, hard to demo reliably |
+
+**Why we build procedures written by people.**
+
+- **It matches what a business needs.** A dealership's rules come from the dealership — prices, warranty, safety —
+  not from what one customer said.
+- **It is predictable.** The same request follows the same steps every time, which is what you want to show and to
+  test.
+- **Learned procedures overlap with semantic memory.** *"Don't quote me prices"* is a fact about Dilip, not a rule
+  for every customer.
+
+> **🏭 Industry practice.** Both approaches exist. Agent tools load **skills** — Markdown files with a name and a
+> description, loaded when a task matches — which is the pattern `v8` follows. Frameworks such as LangMem also offer
+> *learned* procedural memory, where the agent updates its own prompt from feedback.
+
+#### How to find it: an index, then load on demand
+
+- **The system message holds only the index:** each procedure's name and description. That is a few lines, however
+  many procedures there are.
+- **The model decides whether one applies.** If the request matches, it calls `loadProcedure("brake-complaint")` and
+  gets the full steps; if not — *"hi"* — it loads nothing.
+- **Why not similarity search?** It always returns *something*, so *"hi"* would pull in the brake procedure. The
+  model judges whether a procedure applies; a similarity score only ranks.
+- **The same tool calling as `v7`, the other way round.** In `v7` the model **wrote** memory through a tool; here it
+  **reads** memory through one.
+
+#### Human in the loop: recommend, then ask
+
+Every procedure ends in an **action** — booking an inspection, an oil change, a diagnostic. In `v8` the assistant
+does not take that action on its own. It **recommends** the next steps and asks for a **yes or no**; it books only
+after a yes.
+
+```text
+Dilip:      My brakes are grinding when I stop.
+Assistant:  Here is what I recommend: a brake inspection for your Honda Civic at the Plano branch,
+            this Saturday at 9:00. We can only quote a repair price after the inspection.
+            Shall I book it? (yes / no)
+Dilip:      Yes.
+Assistant:  Booked. I'll text you the confirmation.
+```
+
+**Why human in the loop belongs with procedural memory.**
+
+- **Procedures act; the other memories only know.** Episodic and semantic memory change what the assistant
+  *knows* — a wrong episode or fact gives a worse answer. A procedure changes what the assistant *does* — a wrong
+  booking costs the customer a trip and the dealership a slot.
+- **The model chooses the procedure, and it can choose wrong.** *"The car feels weird when I stop"* might load the
+  brake procedure, or not. Showing the recommendation first lets the person catch a wrong procedure before anything
+  happens.
+- **The rules live in a prompt, not in code.** *Never quote a price before the inspection* is text the model is asked
+  to follow. A recommendation the person reads is a second check that it did.
+- **Commitments need consent.** A booking commits the customer's time and, for an oil change, their money. The
+  dealership — and the customer — want that to be the customer's decision, not the model's.
+- **It costs one message.** The person types *yes*. That is cheap compared with undoing a wrong booking.
+
+| Option | How it works | Trade-off |
+|---|---|---|
+| **Act automatically** | the assistant books as soon as the procedure says so — what `v7` does | fastest, but a wrong procedure or a misread request becomes a wrong booking |
+| **Recommend, then ask** ✅ | the procedure's last step asks for a yes or no; the assistant books only after a yes | one extra message; the person sees and approves every action |
+| **Approval enforced in code** | the booking is a tool that only runs after the application has recorded the person's approval | the strongest guarantee, but needs a real booking system and an approval step in the API |
+
+**Where `v8` stops.** Our approval is asked for by the **instructions and the procedures** — the model is told to
+wait for a yes. There is no booking system to lock, so nothing in code stops a model that ignores the rule. In
+production, the booking would be a tool of its own, and the application would refuse to run it until the person's
+approval had been recorded — the third option above.
+
+> **🏭 Industry practice: approval before action.** Pausing an agent for a human decision before a consequential
+> action is a common pattern. Agent frameworks such as LangGraph (interrupts) and the OpenAI Agents SDK (tool
+> approvals) build it in, so a tool call can wait for a person's yes before it runs.
+
+#### The flow
+
+```mermaid
+flowchart TB
+    Q["question"] --> SYS["system message:<br/>instructions + PROCEDURES index + PROFILE + PAST_EPISODES"]
+    IDX[("resources/procedures/*.md<br/>(files)")] -- "names + descriptions" --> SYS
+    UP[("user_profile")] --> SYS
+    EM[("episodic_memory")] --> SYS
+    SYS --> LLM["LLM"]
+    LLM -- "request matches a procedure?<br/>loadProcedure(name)" --> IDX
+    IDX -. "full steps + rules" .-> LLM
+    LLM --> A["recommendation that follows the steps,<br/>using the profile and the episodes:<br/>shall I book it? (yes / no)"]
+    A --> H{"person<br/>says yes?"}
+    H -- yes --> B["book and confirm"]
+    H -- no --> N["do not book"]
+```
+
+### Procedural memory: the implementation (`v8`)
+
+`v8` is `v7` plus procedures. The profile, episodes and conversation memory work exactly as before; the chat
+endpoint adds the procedure index to the system message and gives the model a second tool, `loadProcedure`.
+
+#### Endpoints
+
+| Method | Path | What it does |
+|---|---|---|
+| `POST` | `/v8/memory/users/{userId}/chats/{conversationId}` | chat; uses all three long-term memories, and returns the procedures the model loaded |
+| `GET` | `/v8/procedures` | the index: every procedure's name and description |
+| `GET` | `/v8/procedures/{name}` | one procedure's full steps and rules, as text — `404` if there is no such procedure |
+
+Ending a conversation and the episode endpoints are the `v6` ones; the profile endpoints are the `v7` ones.
+
+##### Chat: `POST /v8/memory/users/{userId}/chats/{conversationId}`
+
+1. **Look up the profile** — as in `v7`.
+2. **Recall episodes** — as in `v6`.
+3. **Build the system message:** the `v7` instructions, the procedure instructions, the `PROCEDURES` index, the
+   `PROFILE` and the `PAST_EPISODES`.
+4. **Answer, with two tools available.** If the request matches a procedure, the model calls `loadProcedure` and
+   follows the steps it gets back. It may also call `updateProfile`, as in `v7`.
+5. **Respond** with the answer, the profile, the recalled episodes, and `proceduresLoaded`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client
+    participant API as ProceduralMemoryController
+    participant LIB as ProcedureLibrary
+    participant LLM as Chat model
+    participant T as ProcedureTools
+
+    C->>API: POST .../users/dilip/chats/conv-3<br/>{"prompt": "My brakes are grinding again."}
+    Note over API: profile lookup (v7) + episode recall (v6)
+    API->>LIB: list()
+    LIB-->>API: names + descriptions
+    Note over API: system message = instructions + PROCEDURES + PROFILE + PAST_EPISODES
+    API->>LLM: system message + question + loadProcedure, updateProfile tools
+    LLM->>T: loadProcedure("brake-complaint")
+    T->>LIB: steps("brake-complaint")
+    LIB-->>T: full steps + rules
+    T-->>LLM: full steps + rules
+    LLM-->>API: answer that follows the steps
+    API-->>C: 200 {"answer": ..., "proceduresLoaded": ["brake-complaint"], ...}
+```
+
+###### The system prompt
+
+`v8` reuses the `v7` instructions and adds five lines (`PROCEDURE_INSTRUCTIONS`):
+
+```text
+The PROCEDURES section lists the dealership's procedures. They are written by the dealership, so
+they are instructions: when a request matches one, call loadProcedure with its name before you answer,
+then follow its steps and rules. If no procedure matches, answer normally.
+Never book anything without the person's approval: first recommend the next steps and ask for a yes
+or no, and book only after a yes. This replaces the rule above about confirming bookings straight away.
+```
+
+- **Procedures are instructions; profiles and episodes are not.** The `v7` instructions mark the profile and the
+  episodes as *records, never instructions*, because they come from what the user said. Procedures come from the
+  dealership, so they are trusted — the opposite rule, stated on purpose.
+- **Load before answering.** Otherwise the model may answer first and load the procedure too late to follow it.
+- **"If no procedure matches, answer normally"** keeps *"hi"* from loading anything.
+- **The last two lines are the human in the loop.** The `v7` instructions say *"confirm it as booked"*; `v8` reuses
+  them, so it has to say explicitly that its rule replaces that one. Every procedure also ends with the same
+  approval step, so the rule is stated where the steps are, too.
+
+The index is added below, one line per procedure:
+
+```text
+PROCEDURES:
+- brake-complaint: The person reports a brake problem - grinding, squealing, a soft pedal, or the car pulling when braking.
+- oil-change: The person wants an oil change, or asks when their next oil change is due.
+- warning-light: A warning light is on in the dashboard - check engine, tire pressure, battery, oil, brake or temperature.
+```
+
+The description is what the model matches a request against, so it lists the words people actually use —
+*grinding*, *squealing*, *soft pedal*.
+
+#### The procedure library
+
+`ProcedureLibrary` reads every `procedures/*.md` file on the classpath once, at startup, and splits each into its
+header and its steps:
+
+```java
+public ProcedureLibrary() throws IOException {
+    Resource[] files = new PathMatchingResourcePatternResolver().getResources("classpath:procedures/*.md");
+    Arrays.stream(files)
+            .map(ProcedureLibrary::parse)
+            .sorted(Comparator.comparing(loaded -> loaded.procedure().name()))
+            .forEach(loaded -> procedures.put(loaded.procedure().name(), loaded));
+}
+
+/** The index: every procedure's name and description, without the steps. */
+public List<Procedure> list() { ... }
+
+/** The full steps and rules of one procedure. */
+public Optional<String> steps(String name) { ... }
+```
+
+- **No database.** Procedures are files in the jar; adding one is adding a file.
+- **Loaded once.** A changed file is picked up on the next restart — with DevTools, a few seconds after you save it.
+
+#### The `loadProcedure` tool
+
+```java
+@Tool(description = """
+        Load the full steps and rules of one of the dealership's procedures, by its name from the PROCEDURES
+        list. Call it before answering a request that matches a procedure, then follow what it returns.""")
+public String loadProcedure(@ToolParam(description = "The procedure name, for example 'brake-complaint'") String name,
+                            ToolContext toolContext) {
+    return library.steps(name)
+            .map(steps -> {
+                ((List<String>) toolContext.getContext().get(LOADED)).add(name);
+                return steps;
+            })
+            .orElse("There is no procedure named '" + name + "'. Answer without one.");
+}
+```
+
+- **It returns text the model reads**, not data for our code: the steps become part of what the model sees before it
+  answers. Spring AI runs the tool and sends the result back, exactly as for `updateProfile` in `v7`.
+- **An unknown name is answered, not thrown.** The model gets a sentence telling it to go on without a procedure.
+- **The tool context records what was loaded.** The controller puts an empty list into the tool context; the tool
+  adds each name it loads; the controller returns the list as `proceduresLoaded`. That is how the response — and the
+  UI — show which rules the answer followed.
+
+#### The files
+
+| File | Role |
+|---|---|
+| `memory/ProceduralMemoryController.java` | the `v8` endpoints and the procedure instructions |
+| `memory/procedural/ProcedureLibrary.java` | reads the procedure files at startup; the index and the steps |
+| `memory/procedural/ProcedureTools.java` | the `loadProcedure` tool the model calls |
+| `resources/procedures/*.md` | the procedures themselves, written by people |
+| `dto/Procedure.java` | one index entry: `name`, `description` |
+| `dto/ProceduralAnswer.java` | the answer, the profile, the recalled episodes, and `proceduresLoaded` |
+
+#### Chatting with procedures
+
+```java
+// 3. procedural memory - only the index; the steps are loaded on demand
+var systemPrompt = SemanticMemoryController.CHAT_INSTRUCTIONS
+        + PROCEDURE_INSTRUCTIONS
+        + renderProcedures(procedures.list())
+        + SemanticMemoryController.renderProfile(profile)
+        + EpisodicMemoryController.renderEpisodes(episodes);
+
+// 4. answer - the model may load a procedure and update the profile while it answers
+List<String> proceduresLoaded = new CopyOnWriteArrayList<>();
+var answer = chatClient.prompt()
+        .system(systemPrompt)
+        .user(userInput.prompt())
+        .tools(profileTools, procedureTools)
+        .toolContext(Map.of(
+                ProfileTools.USER_ID, userId,
+                ProcedureTools.LOADED, proceduresLoaded))
+        .advisors(MessageChatMemoryAdvisor.builder(chatMemory).build())
+        .advisors(advisor -> advisor.param(ChatMemory.CONVERSATION_ID, conversationId))
+        .call()
+        .content();
+```
+
+All four kinds of memory now reach the model:
+
+| Memory | Where it comes from | How it arrives |
+|---|---|---|
+| **Conversation** | `SPRING_AI_CHAT_MEMORY` | real messages, added by the advisor |
+| **Episodic** | `episodic_memory`, by similarity search | dated text in the system message |
+| **Semantic** | `user_profile`, by lookup | the `PROFILE` in the system message |
+| **Procedural** | `procedures/*.md` | the index in the system message; the steps through `loadProcedure` |
+
+#### How human in the loop is implemented
+
+There is **no approval endpoint and no approval flag** in `v8`. The approval is a normal chat turn: the assistant asks
+*yes or no*, and the person's *yes* is the next message to the same chat endpoint. Three pieces make that work on
+the server, and one small check in the page shows the buttons.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor P as Person
+    participant UI as Chat UI (index.html)
+    participant API as POST /v8/.../chats/conv-3
+    participant LLM as Chat model
+
+    P->>UI: "My brakes are grinding when I stop."
+    UI->>API: {"prompt": "My brakes are grinding when I stop."}
+    API->>LLM: system message (approval rule) + question
+    Note over LLM: loadProcedure("brake-complaint")<br/>step 4: recommend, do not book yet
+    LLM-->>API: "I recommend a brake inspection ... Shall I book it? (yes / no)"
+    API-->>UI: 200 {"answer": "... (yes / no)", ...}
+    Note over UI: asksForApproval(answer) is true<br/>→ showApproval()
+    UI-->>P: answer + [Yes, go ahead] [No]
+    P->>UI: clicks Yes, go ahead
+    Note over UI: removeApproval()
+    UI->>API: {"prompt": "Yes, go ahead."}
+    Note over API: the memory advisor adds the earlier<br/>recommendation from SPRING_AI_CHAT_MEMORY
+    API->>LLM: system message + recommendation + "Yes, go ahead."
+    Note over LLM: step 5: only after a yes - book
+    LLM-->>API: "Booked. I'll text you the confirmation."
+    API-->>UI: 200 {"answer": "Booked. ..."}
+    Note over UI: no yes/no in the answer → no buttons
+```
+
+##### On the server: two instructions and the conversation memory
+
+1. **The system prompt sets the rule.** The last two lines of `PROCEDURE_INSTRUCTIONS` — *"Never book anything
+   without the person's approval: first recommend the next steps and ask for a yes or no, and book only after a
+   yes."* — apply to every request, whether a procedure is loaded or not.
+2. **Every procedure repeats it as steps.** The rule is written where the actions are, so the model reads it again
+   when it loads the procedure:
+
+   ```text
+   4. Recommend the next steps - a brake inspection, with the vehicle, branch and time - and ask the person to
+      approve them with a yes or no. Do not book yet.
+   5. Only after a yes: book the brake inspection and confirm it the way the person's contact preference allows.
+      After a no: do not book; ask what they would like to change.
+   ```
+
+   `ProcedureLibraryTest.everyProcedureAsksForApprovalBeforeBooking` fails if a new procedure leaves this out.
+3. **The conversation memory connects the two turns.** *"Yes, go ahead."* means nothing on its own. It works because
+   `MessageChatMemoryAdvisor` adds this conversation's earlier messages — including the recommendation — from
+   `SPRING_AI_CHAT_MEMORY`, so the model knows *what* the yes approves. This is the short-term memory from the start of
+   the course doing the job.
+
+- **Nothing in Java checks for the yes.** The controller does not know a recommendation is waiting; it sends every
+  message the same way. That is why the trade-offs say the approval is *asked for, not enforced*.
+- **The steps may be loaded again.** The advisor saves the question and the final answer, not the tool call in
+  between, so on the *yes* turn the model may call `loadProcedure` once more to see step 5 — `proceduresLoaded` shows
+  it when it does.
+
+##### In the UI: when the buttons appear
+
+The server returns no field that says *"waiting for approval"*, so the page reads the answer text. After every
+`v8` reply, `send` checks it:
+
+```javascript
+async function send(prompt) {
+    removeApproval();                                   // 1. any open bar goes away
+    addMessage('user', prompt);
+    await busy($('send-button'), async () => {
+        const result = await call('POST', `${version()}/memory/users/${userId()}/chats/${conversationId()}`, { prompt });
+        addMessage('assistant', result.answer);
+        // ... recalled episodes, profile, procedures loaded
+        if (version() === 'v8' && asksForApproval(result.answer)) showApproval();   // 2. does it ask?
+    });
+}
+
+function asksForApproval(answer) {
+    return /\byes\b[^.?!]{0,12}\bno\b/i.test(answer ?? '');
+}
+
+function showApproval() {                               // 3. the bar, under the answer
+    const bar = document.createElement('div');
+    bar.className = 'approval';
+    bar.id = 'approval';
+    bar.innerHTML = '<span>Approve the recommended steps?</span>'
+        + '<button class="yes">Yes, go ahead</button><button class="no">No</button>';
+    bar.querySelector('.yes').addEventListener('click', () => send('Yes, go ahead.'));
+    bar.querySelector('.no').addEventListener('click', () => send('No.'));
+    $('messages').append(bar);
+}
+
+function removeApproval() {
+    $('approval')?.remove();
+}
+```
+
+1. **Only in `v8`.** `v6` and `v7` have no approval rule, so their answers never get the bar.
+2. **The check is a regular expression** — the word *yes*, then the word *no* within 12 characters, with no `.`,
+   `?` or `!` in between:
+
+   | Answer ends with | Bar? | Why |
+   |---|---|---|
+   | *Shall I book it? (yes / no)* | ✅ | *yes*, then ` / ` , then *no* |
+   | *Please reply yes or no.* | ✅ | *yes*, then ` or `, then *no* |
+   | *Booked. I'll text you the confirmation.* | ❌ | no *yes* at all |
+   | *Yes. There is no charge for the inspection.* | ❌ | a `.` between *yes* and *no* |
+   | *I can book it - just say yes and I'll do it.* | ❌ | no *no* after the *yes* |
+
+   `\b` matches whole words only, so *eyes* or *know* do not count.
+3. **The buttons call the same `send`** as the input box. **Yes, go ahead** sends *"Yes, go ahead."* and **No** sends
+   *"No."* — exactly as if the person had typed them. Typing *yes* does the same thing.
+4. **The bar is removed on the next send**, whichever way it is sent, so an old question never keeps its buttons.
+
+**Why read the text instead of a flag.** It keeps the API unchanged — the buttons are a convenience on top of the
+conversation, not part of the protocol. The cost is that the page can guess wrong: if the model asks for approval in
+other words (*"Shall I go ahead?"*), no bar appears and the person types the answer. A sturdier design has the server
+return the decision — for example an `awaitingApproval` field the model fills through structured output, or set by a
+booking tool that pauses — and the page shows the buttons only when it is `true`.
+
+#### Trade-offs
+
+- **The model decides whether a procedure applies.** It can miss one — a vague *"the car feels weird when I stop"*
+  may not load `brake-complaint` — or load the wrong one. Clear descriptions are the main lever.
+- **Following is not guaranteed.** A loaded procedure is text in the prompt; the model usually follows it, but a
+  rule like *never quote a price* is not enforced by code. Anything that must never happen belongs in code, not only
+  in a procedure.
+- **The approval is asked for, not enforced.** The model is told to wait for a yes; nothing in code stops it
+  booking without one. A real booking system would enforce it — see
+  [Human in the loop](#human-in-the-loop-recommend-then-ask).
+- **One more message per booking.** The person has to say *yes* — the price of approving every action.
+- **An extra round trip** when a procedure is loaded — two, if the profile is also updated.
+- **Changing a rule needs a deploy.** That is the price of procedures being reviewed like code.
+- **The index grows with every procedure.** Three lines is nothing; three hundred would need the index itself to be
+  searched.
+
+#### Beyond this course: procedures that run tools
+
+In `v8` a procedure is **text**: the model reads the steps and *describes* what it would do — *"I'll book a brake
+inspection"*. Nothing is actually looked up, scheduled or sent. In a real assistant, each step is backed by a
+**tool** that does the work, and following the procedure means calling those tools in order.
+
+| Step in `brake-complaint` | In this course | In a real system — a tool |
+|---|---|---|
+| Check for an earlier brake report | read `PAST_EPISODES` | `findServiceHistory(vehicle)` — the dealership's service records |
+| Use the vehicle and home branch | read the `PROFILE` | `lookUpVehicle(userId)` — VIN, model year, warranty status |
+| Recommend the next steps | the model writes them | `findOpenSlots(branch, service, week)` — real times, not made-up ones |
+| Ask for a yes or no | the model asks | the application records the person's approval |
+| Book the inspection | the model says *"Booked"* | `bookAppointment(slot, vehicle)` — runs **only** with a recorded approval |
+| Confirm by text | the model says it will | `sendText(phone, message)` — follows `contactPreference` |
+
+**The procedure file names its tools.** The steps stay in Markdown for people to read and review; the header lists
+the tools the procedure is allowed to use:
+
+```markdown
+---
+name: brake-complaint
+description: The person reports a brake problem - grinding, squealing, a soft pedal, ...
+tools: findServiceHistory, lookUpVehicle, findOpenSlots, bookAppointment, sendText
+---
+# Brake complaint
+1. Call findServiceHistory. If there is an earlier brake report, treat it as a repeat complaint ...
+```
+
+**What changes in the code:**
+
+- **`loadProcedure` returns the steps *and* unlocks the tools.** Before a procedure is loaded, the model only has
+  `loadProcedure` and `updateProfile`. After it, the request is sent again with that procedure's tools added — the
+  model can only call the tools the procedure allows.
+- **The steps decide the order; the tools do the work.** The model still reads the procedure, but it now *calls*
+  `findOpenSlots` instead of inventing a time, and the answer contains real data.
+- **The approval moves into code.** `bookAppointment` refuses to run unless the application has recorded the
+  person's *yes* for that slot. The human in the loop is no longer only an instruction — it is
+  [the third option](#human-in-the-loop-recommend-then-ask), enforced.
+- **Rules can be checked, too.** *"Never quote a repair price before the inspection"* becomes a tool that has no
+  price to return — the model cannot quote what it was never given.
+
+**Why the course stops at text.** The memory lesson is how a procedure reaches the model — written by people, found
+by its description, loaded on demand. Tools per step need a scheduling system, a vehicle database and a text
+service, which would turn the section into an integration project. The structure above is where `v8` would grow
+next.
+
+#### Trying it in the chat UI
+
+Open **<http://localhost:8084/springai/>** and switch the selector to **v8 · episodic + semantic + procedural**.
+A **Procedures** card appears at the top of the memory panel, listing every procedure; after each answer, the ones
+the model loaded are marked *loaded for the last answer*.
+
+| On screen | Endpoint it calls |
+|---|---|
+| **Send** (in `v8`) | `POST /v8/memory/users/{userId}/chats/{conversationId}` |
+| the **Procedures** card, on switching to `v8` | `GET /v8/procedures` |
+| Profile, End, Search, Forget | the `v7` and `v6` endpoints, unchanged |
+| **Yes, go ahead** / **No** | the same chat endpoint — they send *"Yes, go ahead."* or *"No."* as a message |
+
+**The approval buttons.** When a `v8` answer asks for a *yes or no*, an **Approve the recommended steps?** bar
+appears under it, with **Yes, go ahead** and **No**.
+
+- **They only type for you.** A button sends the word as an ordinary message; the assistant reads it like any other
+  reply and books — or not. Typing *yes* works just as well.
+- **The page spots the question in the text.** It looks for *yes* followed closely by *no* in the answer
+  (*"(yes / no)"*, *"yes or no"*). The approval itself happens in the conversation, not in the page.
+- **The bar disappears** as soon as anything is sent.
+
+How the check and the buttons are built: [In the UI: when the buttons appear](#in-the-ui-when-the-buttons-appear).
+
+**The demo, end to end.** It builds on the `v7` demo, so every memory takes part.
+
+**Step 1 — Clean start.** In `v8`, press **Forget profile** and **Forget all episodes**.
+
+**Step 2 — Build the profile.** Send these, one at a time:
+
+| Message | What to point out |
+|---|---|
+| *Hi, I'm Dilip. I drive a Honda Civic and I usually go to the Plano branch.* | No procedure is loaded — nothing matches. The profile fills in, as in `v7`. |
+| *Please text me any updates. Never call me.* | `contactPreference` is saved. |
+
+**Step 3 — A first brake complaint.**
+
+| Message | What to point out |
+|---|---|
+| *My brakes are grinding when I stop.* | `brake-complaint` is loaded. The answer **recommends** an inspection for the Civic at Plano — without asking for the car or branch — quotes **no** price, and asks *yes or no*. Nothing is booked yet. |
+| *How much will the repair cost?* | The rule holds: no price before the inspection. |
+| **Yes, go ahead** (the button) | **Now** it books, and confirms by text — the contact preference. |
+
+Press **End conversation**, then **New chat**. The episode records the brake complaint.
+
+**Step 4 — A repeat complaint.**
+
+| Message | What to point out |
+|---|---|
+| *The brakes are grinding again.* | `brake-complaint` is loaded **and** the earlier brake episode is recalled — so the procedure's step 2 applies: a repeat complaint, earliest slot, free inspection. All three memories in one answer — and it still asks before booking. |
+| **No** (the button) | The **no** path: nothing is booked, and the assistant asks what to change. |
+
+**Step 5 — A different procedure.**
+
+| Message | What to point out |
+|---|---|
+| *I need an oil change.* | `oil-change` is loaded: it asks conventional or synthetic, and recommends synthetic. |
+| *Synthetic, please. How much is it?* | $89 — the price from the procedure, not one the model made up — then the recommendation and *yes or no*. |
+| **Yes, go ahead** | Booked and confirmed by text. |
+| *My check engine light is on, it's amber.* | `warning-light` is loaded: it recommends a diagnostic at Plano within the week, asks before booking, and never says "it's safe to ignore". |
+
+#### Testing it with curl
+
+```shell
+# the index, and one procedure
+curl -s http://localhost:8084/springai/v8/procedures | jq
+curl -s http://localhost:8084/springai/v8/procedures/brake-complaint
+
+# a request that matches a procedure
+curl -X POST http://localhost:8084/springai/v8/memory/users/dilip/chats/conv-1 \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"My brakes are grinding when I stop."}' | jq '.answer, .proceduresLoaded'
+
+# a request that does not - proceduresLoaded is []
+curl -X POST http://localhost:8084/springai/v8/memory/users/dilip/chats/conv-1 \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"Thanks, that is all."}' | jq '.proceduresLoaded'
 ```

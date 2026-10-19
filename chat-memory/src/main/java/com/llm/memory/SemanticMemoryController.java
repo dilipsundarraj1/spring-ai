@@ -39,7 +39,7 @@ public class SemanticMemoryController {
 
     private static final Logger log = LoggerFactory.getLogger(SemanticMemoryController.class);
 
-    private static final String CHAT_INSTRUCTIONS = """
+    static final String CHAT_INSTRUCTIONS = """
             You are a car-service assistant for a dealership.
             The PROFILE section holds standing facts about this person. Follow them - for example, contact them
             only the way their contact preference allows.

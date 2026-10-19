@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  Car-service assistant: a plain page over the v6 (episodic) and v7 (episodic + semantic) memory endpoints.
+  Car-service assistant: a plain page over the v6 (episodic), v7 (+ semantic) and v8 (+ procedural) memory endpoints.
   No framework, no build step - Spring Boot serves everything in static/, and every button below
   is one of the curls from docs/ai_memory.md.
 -->
@@ -50,6 +50,9 @@
         .msg.user { align-self: flex-end; background: var(--user); color: var(--user-text); }
         .msg.assistant { align-self: flex-start; background: var(--bot); }
         .msg.error { align-self: center; color: var(--danger); background: none; }
+        .approval { align-self: flex-start; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+                    padding: 8px 12px; border: 1px dashed var(--accent); border-radius: 12px; font-size: 14px; }
+        .approval .yes { background: var(--ok); border-color: var(--ok); color: #fff; }
         .divider { align-self: center; font-size: 13px; color: var(--muted); }
         #chat-form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border); }
         #chat-form input { flex: 1; }
@@ -67,8 +70,12 @@
         .profile dd { margin: 0; }
         .profile dd.changed { color: var(--ok); font-weight: 600; }
         .profile dd.changed::after { content: "  ← just saved"; font-weight: normal; font-size: 12px; }
-        .v7-only { display: none; }
-        body.v7 .v7-only { display: block; }
+        .v7-only, .v8-only { display: none; }
+        body.v7 .v7-only, body.v8 .v7-only, body.v8 .v8-only { display: block; }
+        .procedure { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; padding: 3px 0; }
+        .procedure .name { font-family: ui-monospace, monospace; }
+        .procedure.loaded .name { color: var(--ok); font-weight: 600; }
+        .procedure .badge { font-size: 12px; color: var(--ok); }
         #last-call { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted);
                      word-break: break-all; }
     </style>
@@ -79,6 +86,7 @@
     <select id="version" title="which memory the assistant uses">
         <option value="v6">v6 · episodic</option>
         <option value="v7">v7 · episodic + semantic</option>
+        <option value="v8">v8 · episodic + semantic + procedural</option>
     </select>
     <label>user <input id="user-id" value="dilip" size="8"></label>
     <span class="tag" id="conversation-id"></span>
@@ -96,6 +104,10 @@
     </section>
 
     <section id="memory">
+        <div class="v8-only">
+            <h2>Procedures <span style="text-transform: none">(procedural memory)</span></h2>
+            <div id="procedures"></div>
+        </div>
         <div class="v7-only">
             <h2>Profile <span style="text-transform: none">(semantic memory)</span></h2>
             <dl class="profile" id="profile"></dl>
@@ -143,12 +155,14 @@
     showConversation();
 
     // v6: episodic memory only. v7: the same, plus the profile - written by the model through a tool.
+    // v8: the same, plus the dealership's procedures - loaded by the model through a tool.
     // End, search and forget-episodes are the same in both, so they always call the v6 endpoints.
     const version = () => $('version').value;
-    $('version').value = read('episodic-demo.version') === 'v7' ? 'v7' : 'v6';
+    $('version').value = ['v7', 'v8'].includes(read('episodic-demo.version')) ? read('episodic-demo.version') : 'v6';
+    const hasProfile = () => version() !== 'v6';
     showVersion();
     $('version').addEventListener('change', () => { write('episodic-demo.version', version()); showVersion(); });
-    $('user-id').addEventListener('change', () => { if (version() === 'v7') loadProfile(); });
+    $('user-id').addEventListener('change', () => { if (hasProfile()) loadProfile(); });
 
     // every call goes through here, so the panel can show which endpoint each button used
     async function call(method, path, body) {
@@ -163,19 +177,49 @@
         return response.status === 204 ? null : response.json();
     }
 
-    // POST /v6 or /v7/memory/users/{userId}/chats/{conversationId}
-    $('chat-form').addEventListener('submit', async event => {
+    // POST /v6, /v7 or /v8/memory/users/{userId}/chats/{conversationId}
+    $('chat-form').addEventListener('submit', event => {
         event.preventDefault();
         const prompt = $('prompt').value.trim();
         $('prompt').value = '';
+        send(prompt);
+    });
+
+    async function send(prompt) {
+        removeApproval();
         addMessage('user', prompt);
         await busy($('send-button'), async () => {
             const result = await call('POST', `${version()}/memory/users/${userId()}/chats/${conversationId()}`, { prompt });
             addMessage('assistant', result.answer);
             renderEpisodes($('recalled'), result.recalledEpisodes, 'No episode was recalled.');
             if (result.profile) renderProfile(result.profile);
+            if (result.proceduresLoaded) markLoaded(result.proceduresLoaded);
+            if (version() === 'v8' && asksForApproval(result.answer)) showApproval();
         });
-    });
+    }
+
+    // Human in the loop (v8): the procedures make the assistant recommend the next steps and ask for a yes or no
+    // before it books anything. When an answer asks that, offer the two replies as buttons. They only send the
+    // word as a normal message - the decision is still made in the conversation, as if it were typed.
+    function asksForApproval(answer) {
+        return /\byes\b[^.?!]{0,12}\bno\b/i.test(answer ?? '');
+    }
+
+    function showApproval() {
+        const bar = document.createElement('div');
+        bar.className = 'approval';
+        bar.id = 'approval';
+        bar.innerHTML = '<span>Approve the recommended steps?</span>'
+            + '<button class="yes">Yes, go ahead</button><button class="no">No</button>';
+        bar.querySelector('.yes').addEventListener('click', () => send('Yes, go ahead.'));
+        bar.querySelector('.no').addEventListener('click', () => send('No.'));
+        $('messages').append(bar);
+        bar.scrollIntoView({ block: 'end' });
+    }
+
+    function removeApproval() {
+        $('approval')?.remove();
+    }
 
     // POST /v6/memory/users/{userId}/chats/{conversationId}/end
     $('end-button').addEventListener('click', () => busy($('end-button'), async () => {
@@ -228,7 +272,35 @@
 
     function showVersion() {
         document.body.classList.toggle('v7', version() === 'v7');
-        if (version() === 'v7') loadProfile();
+        document.body.classList.toggle('v8', version() === 'v8');
+        if (hasProfile()) loadProfile();
+        if (version() === 'v8') loadProcedures();
+    }
+
+    // GET /v8/procedures - the index; the card marks the ones the model loaded for the last answer
+    async function loadProcedures() {
+        try {
+            const procedures = await call('GET', 'v8/procedures');
+            $('procedures').replaceChildren(...procedures.map(procedure => {
+                const row = document.createElement('div');
+                row.className = 'procedure';
+                row.dataset.name = procedure.name;
+                row.title = procedure.description;
+                row.innerHTML = '<span class="name"></span><span class="badge"></span>';
+                row.firstChild.textContent = procedure.name;
+                return row;
+            }));
+        } catch (error) {
+            addMessage('error', `Request failed: ${error.message}. Check the application log.`);
+        }
+    }
+
+    function markLoaded(names) {
+        for (const row of $('procedures').children) {
+            const loaded = names.includes(row.dataset.name);
+            row.classList.toggle('loaded', loaded);
+            row.lastChild.textContent = loaded ? 'loaded for the last answer' : '';
+        }
     }
 
     // GET /v7/memory/users/{userId}/profile
