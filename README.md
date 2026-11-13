@@ -1,3 +1,21 @@
+# Spring AI Masterclass: LLMs, RAG, MCP, Tools & Memory
+
+The source code for the **Spring AI Masterclass**.
+
+- **What you build:** real AI applications in Java with Spring AI 2.0 and Spring Boot 4.
+- **What you need:** Spring Boot. No AI or machine learning background is needed.
+- **Where it starts:** what an LLM is, and your first `ChatClient` call.
+- **Where it goes:**
+  - prompt engineering
+  - structured outputs and tool calling
+  - RAG with PGVector
+  - images, vision and audio
+  - observability with OpenTelemetry
+  - MCP servers and clients
+  - chat memory and long-term memory
+
+New to the course? Start with the **[Course Roadmap & Objectives](COURSE.md)**: seven steps from LLM foundations to MCP and memory.
+
 <!-- TOC -->
   * [Module Summary](#module-summary)
 <!-- TOC -->
