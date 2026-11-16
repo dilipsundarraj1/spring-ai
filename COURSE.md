@@ -12,7 +12,7 @@ flowchart TB
     S2["<b>2 · Prompting Like a Pro</b><br/>Reliable, reusable, injection-aware prompts"]
     S3["<b>3 · LLMs Inside Real Apps</b><br/>Typed Java objects and tool calling"]
     S4["<b>4 · RAG</b><br/>Answers grounded in your own documents"]
-    S5["<b>5 · Beyond Text</b><br/>Images, vision and audio"]
+    S5["<b>5 · Multimodality</b><br/>Images, vision and audio"]
     S6["<b>6 · MCP</b><br/>Build MCP servers and clients"]
     S7["<b>7 · Memory</b><br/>Assistants that remember"]
 
@@ -46,7 +46,7 @@ flowchart TB
 | 2 | [Prompting Like a Pro](#step-2--prompting-like-a-pro) | write reliable, reusable, injection-aware prompts | [`explore-openai`](explore-openai) |
 | 3 | [LLMs Inside Real Apps](#step-3--llms-inside-real-apps) | get typed Java objects back and let the model call your code | [`explore-openai`](explore-openai) |
 | 4 | [RAG](#step-4--rag) | ground answers in your own documents | [`explore-rag`](explore-rag) |
-| 5 | [Beyond Text](#step-5--beyond-text) | generate and understand images and audio | [`multimodal-llms`](multimodal-llms) |
+| 5 | [Multimodality](#step-5--multimodality) | generate and understand images and audio | [`multimodal-llms`](multimodal-llms) |
 | 6 | [MCP](#step-6--mcp) | build MCP servers and clients, and add MCP to an existing REST API | [`mcp`](mcp) |
 | 7 | [Memory](#step-7--memory) | build assistants that remember within a conversation and across conversations | [`chat-memory`](chat-memory) |
 
@@ -102,7 +102,7 @@ By the end of this step you'll be able to:
 - build an end-to-end **index → retrieve → generate** Q&A app, and explain how embeddings are created
 - ingest PDFs, Word documents and text files, chunking by page, paragraph or token
 
-## Step 5 — Beyond Text
+## Step 5 — Multimodality
 
 *Sections: Image Generation · Vision · Audio · Local LLMs with Ollama*
 
