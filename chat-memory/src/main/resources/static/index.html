@@ -1,0 +1,385 @@
+<!doctype html>
+<!--
+  Car-service assistant: a plain page over the v6 (episodic), v7 (+ semantic) and v8 (+ procedural) memory endpoints.
+  No framework, no build step - Spring Boot serves everything in static/, and every button below
+  is one of the curls from docs/ai_memory.md.
+-->
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Car-Service Assistant</title>
+    <link rel="icon" href="data:,">
+    <style>
+        :root {
+            --bg: #f4f5f7; --card: #ffffff; --text: #1d2330; --muted: #6b7280; --border: #dfe3e8;
+            --accent: #2563eb; --user: #2563eb; --user-text: #ffffff; --bot: #eef1f5; --danger: #b91c1c;
+            --ok: #047857;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #111418; --card: #1a1f26; --text: #e6e8eb; --muted: #9aa3ad; --border: #2c333c;
+                --accent: #60a5fa; --user: #2563eb; --bot: #242a33; --danger: #f87171; --ok: #34d399;
+            }
+        }
+        * { box-sizing: border-box; }
+        body { margin: 0; font: 15px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--text); }
+        header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 12px 16px;
+                 border-bottom: 1px solid var(--border); background: var(--card); }
+        header h1 { font-size: 17px; margin: 0 auto 0 0; }
+        main { display: grid; grid-template-columns: 1fr 380px; gap: 16px; padding: 16px;
+               height: calc(100vh - 58px); }
+        @media (max-width: 860px) { main { grid-template-columns: 1fr; height: auto; } }
+        section { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+                  display: flex; flex-direction: column; min-height: 0; }
+        h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
+             margin: 0 0 8px; }
+        input, select, button { font: inherit; color: inherit; }
+        input, select { padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+        button { padding: 7px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg);
+                 cursor: pointer; }
+        button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+        button.danger { color: var(--danger); }
+        button:disabled { opacity: .5; cursor: wait; }
+        .tag { font-family: ui-monospace, monospace; font-size: 13px; padding: 3px 8px; border-radius: 6px;
+               background: var(--bg); border: 1px solid var(--border); }
+
+        #messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px;
+                    min-height: 300px; }
+        .msg { max-width: 80%; padding: 9px 12px; border-radius: 12px; white-space: pre-wrap; }
+        .msg.user { align-self: flex-end; background: var(--user); color: var(--user-text); }
+        .msg.assistant { align-self: flex-start; background: var(--bot); }
+        .msg.error { align-self: center; color: var(--danger); background: none; }
+        .approval { align-self: flex-start; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+                    padding: 8px 12px; border: 1px dashed var(--accent); border-radius: 12px; font-size: 14px; }
+        .approval .yes { background: var(--ok); border-color: var(--ok); color: #fff; }
+        .divider { align-self: center; font-size: 13px; color: var(--muted); }
+        #chat-form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border); }
+        #chat-form input { flex: 1; }
+
+        #memory { padding: 14px; gap: 18px; overflow-y: auto; }
+        .episode { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px;
+                   font-size: 14px; }
+        .episode .meta { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted);
+                         margin-bottom: 4px; font-family: ui-monospace, monospace; }
+        .empty { color: var(--muted); font-size: 14px; font-style: italic; }
+        .row { display: flex; gap: 6px; flex-wrap: wrap; }
+        .row input[type=number] { width: 70px; }
+        .profile { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 14px; }
+        .profile dt { color: var(--muted); }
+        .profile dd { margin: 0; }
+        .profile dd.changed { color: var(--ok); font-weight: 600; }
+        .profile dd.changed::after { content: "  ← just saved"; font-weight: normal; font-size: 12px; }
+        .v7-only, .v8-only { display: none; }
+        body.v7 .v7-only, body.v8 .v7-only, body.v8 .v8-only { display: block; }
+        .procedure { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; padding: 3px 0; }
+        .procedure .name { font-family: ui-monospace, monospace; }
+        .procedure.loaded .name { color: var(--ok); font-weight: 600; }
+        .procedure .badge { font-size: 12px; color: var(--ok); }
+        #last-call { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted);
+                     word-break: break-all; }
+    </style>
+</head>
+<body>
+<header>
+    <h1>🚗 Car-Service Assistant</h1>
+    <select id="version" title="which memory the assistant uses">
+        <option value="v6">v6 · episodic</option>
+        <option value="v7">v7 · episodic + semantic</option>
+        <option value="v8">v8 · episodic + semantic + procedural</option>
+    </select>
+    <label>user <input id="user-id" value="dilip" size="8"></label>
+    <span class="tag" id="conversation-id"></span>
+    <button id="new-button">New chat</button>
+    <button id="end-button">End conversation</button>
+</header>
+
+<main>
+    <section>
+        <div id="messages"></div>
+        <form id="chat-form">
+            <input id="prompt" placeholder="My Civic makes a grinding noise when I brake." autocomplete="off" required>
+            <button class="primary" id="send-button">Send</button>
+        </form>
+    </section>
+
+    <section id="memory">
+        <div class="v8-only">
+            <h2>Procedures <span style="text-transform: none">(procedural memory)</span></h2>
+            <div id="procedures"></div>
+        </div>
+        <div class="v7-only">
+            <h2>Profile <span style="text-transform: none">(semantic memory)</span></h2>
+            <dl class="profile" id="profile"></dl>
+            <button class="danger" id="forget-profile-button" style="margin-top: 8px">Forget profile</button>
+        </div>
+        <div>
+            <h2>Recalled for the last answer</h2>
+            <div id="recalled"><p class="empty">Send a message to see which episodes are recalled.</p></div>
+        </div>
+        <div>
+            <h2>Last episode written</h2>
+            <div id="written"><p class="empty">Press "End conversation" to write one.</p></div>
+        </div>
+        <div>
+            <h2>Search episodes <span style="text-transform: none">(no LLM call)</span></h2>
+            <form class="row" id="search-form">
+                <input id="query" placeholder="brake noise" required style="flex: 1">
+                <label title="recentDays">days <input type="number" id="recent-days" value="30" min="0"></label>
+                <label title="topK">top <input type="number" id="top-k" value="3" min="1"></label>
+                <button>Search</button>
+            </form>
+            <div id="search-results" style="margin-top: 8px"></div>
+        </div>
+        <div class="row">
+            <button class="danger" id="forget-button">Forget all episodes</button>
+        </div>
+        <div>
+            <h2>Last request</h2>
+            <div id="last-call">-</div>
+        </div>
+    </section>
+</main>
+
+<script>
+    const $ = id => document.getElementById(id);
+    const userId = () => encodeURIComponent($('user-id').value.trim() || 'dilip');
+    const conversationId = () => `conv-${conversationNumber}`;
+
+    // every page load starts a new conversation: the messages on screen are gone after a reload, so the
+    // old conversation can only be continued by mistake - and it may already have ended
+    let conversationNumber = (Number(read('episodic-demo.conversation')) || 0) + 1;
+    write('episodic-demo.conversation', conversationNumber);
+    let ended = false;
+    let profile = null;
+    showConversation();
+
+    // v6: episodic memory only. v7: the same, plus the profile - written by the model through a tool.
+    // v8: the same, plus the dealership's procedures - loaded by the model through a tool.
+    // End, search and forget-episodes are the same in both, so they always call the v6 endpoints.
+    const version = () => $('version').value;
+    $('version').value = ['v7', 'v8'].includes(read('episodic-demo.version')) ? read('episodic-demo.version') : 'v6';
+    const hasProfile = () => version() !== 'v6';
+    showVersion();
+    $('version').addEventListener('change', () => { write('episodic-demo.version', version()); showVersion(); });
+    $('user-id').addEventListener('change', () => { if (hasProfile()) loadProfile(); });
+
+    // every call goes through here, so the panel can show which endpoint each button used
+    async function call(method, path, body) {
+        $('last-call').textContent = `${method} /springai/${path} …`;
+        const response = await fetch(path, {
+            method,
+            headers: body ? { 'Content-Type': 'application/json' } : {},
+            body: body ? JSON.stringify(body) : undefined
+        });
+        $('last-call').textContent = `${method} /springai/${path} → ${response.status}`;
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.status === 204 ? null : response.json();
+    }
+
+    // POST /v6, /v7 or /v8/memory/users/{userId}/chats/{conversationId}
+    $('chat-form').addEventListener('submit', event => {
+        event.preventDefault();
+        const prompt = $('prompt').value.trim();
+        $('prompt').value = '';
+        send(prompt);
+    });
+
+    async function send(prompt) {
+        removeApproval();
+        addMessage('user', prompt);
+        await busy($('send-button'), async () => {
+            const result = await call('POST', `${version()}/memory/users/${userId()}/chats/${conversationId()}`, { prompt });
+            addMessage('assistant', result.answer);
+            renderEpisodes($('recalled'), result.recalledEpisodes, 'No episode was recalled.');
+            if (result.profile) renderProfile(result.profile);
+            if (result.proceduresLoaded) markLoaded(result.proceduresLoaded);
+            if (version() === 'v8' && asksForApproval(result.answer)) showApproval();
+        });
+    }
+
+    // Human in the loop (v8): the procedures make the assistant recommend the next steps and ask for a yes or no
+    // before it books anything. When an answer asks that, offer the two replies as buttons. They only send the
+    // word as a normal message - the decision is still made in the conversation, as if it were typed.
+    function asksForApproval(answer) {
+        return /\byes\b[^.?!]{0,12}\bno\b/i.test(answer ?? '');
+    }
+
+    function showApproval() {
+        const bar = document.createElement('div');
+        bar.className = 'approval';
+        bar.id = 'approval';
+        bar.innerHTML = '<span>Approve the recommended steps?</span>'
+            + '<button class="yes">Yes, go ahead</button><button class="no">No</button>';
+        bar.querySelector('.yes').addEventListener('click', () => send('Yes, go ahead.'));
+        bar.querySelector('.no').addEventListener('click', () => send('No.'));
+        $('messages').append(bar);
+        bar.scrollIntoView({ block: 'end' });
+    }
+
+    function removeApproval() {
+        $('approval')?.remove();
+    }
+
+    // POST /v6/memory/users/{userId}/chats/{conversationId}/end
+    $('end-button').addEventListener('click', () => busy($('end-button'), async () => {
+        const episode = await call('POST', `v6/memory/users/${userId()}/chats/${conversationId()}/end`);
+        renderEpisodes($('written'), episode ? [episode] : [], `Nothing worth remembering in ${conversationId()} (204).`);
+        ended = true;
+        addMessage('divider', `${conversationId()} has ended. Press "New chat" to start another conversation.`);
+    }));
+
+    // no endpoint: switches to the next conversation id. Without /end the old conversation is never
+    // summarised - its messages stay in SPRING_AI_CHAT_MEMORY and no episode is written.
+    $('new-button').addEventListener('click', () => {
+        conversationNumber++;
+        write('episodic-demo.conversation', conversationNumber);
+        ended = false;
+        showConversation();
+    });
+
+    // GET /v6/memory/users/{userId}/episodes?query=...
+    $('search-form').addEventListener('submit', event => {
+        event.preventDefault();
+        const params = new URLSearchParams({
+            query: $('query').value, recentDays: $('recent-days').value, topK: $('top-k').value
+        });
+        busy(event.submitter, async () => {
+            const episodes = await call('GET', `v6/memory/users/${userId()}/episodes?${params}`);
+            renderEpisodes($('search-results'), episodes, 'No episode qualified.');
+        });
+    });
+
+    // DELETE /v6/memory/users/{userId}/episodes
+    $('forget-button').addEventListener('click', () => {
+        if (!confirm(`Forget every episode of "${$('user-id').value}"?`)) return;
+        busy($('forget-button'), async () => {
+            await call('DELETE', `v6/memory/users/${userId()}/episodes`);
+            $('search-results').replaceChildren();
+            renderEpisodes($('written'), [], 'All episodes forgotten.');
+        });
+    });
+
+    // DELETE /v7/memory/users/{userId}/profile
+    $('forget-profile-button').addEventListener('click', () => {
+        if (!confirm(`Forget the profile of "${$('user-id').value}"?`)) return;
+        busy($('forget-profile-button'), async () => {
+            await call('DELETE', `v7/memory/users/${userId()}/profile`);
+            profile = null;
+            await loadProfile();
+        });
+    });
+
+    function showVersion() {
+        document.body.classList.toggle('v7', version() === 'v7');
+        document.body.classList.toggle('v8', version() === 'v8');
+        if (hasProfile()) loadProfile();
+        if (version() === 'v8') loadProcedures();
+    }
+
+    // GET /v8/procedures - the index; the card marks the ones the model loaded for the last answer
+    async function loadProcedures() {
+        try {
+            const procedures = await call('GET', 'v8/procedures');
+            $('procedures').replaceChildren(...procedures.map(procedure => {
+                const row = document.createElement('div');
+                row.className = 'procedure';
+                row.dataset.name = procedure.name;
+                row.title = procedure.description;
+                row.innerHTML = '<span class="name"></span><span class="badge"></span>';
+                row.firstChild.textContent = procedure.name;
+                return row;
+            }));
+        } catch (error) {
+            addMessage('error', `Request failed: ${error.message}. Check the application log.`);
+        }
+    }
+
+    function markLoaded(names) {
+        for (const row of $('procedures').children) {
+            const loaded = names.includes(row.dataset.name);
+            row.classList.toggle('loaded', loaded);
+            row.lastChild.textContent = loaded ? 'loaded for the last answer' : '';
+        }
+    }
+
+    // GET /v7/memory/users/{userId}/profile
+    async function loadProfile() {
+        profile = null;
+        try {
+            renderProfile(await call('GET', `v7/memory/users/${userId()}/profile`));
+        } catch (error) {
+            addMessage('error', `Request failed: ${error.message}. Check the application log.`);
+        }
+    }
+
+    // fields that differ from the previous render are highlighted: the model just saved them
+    function renderProfile(next) {
+        const fields = [['name', 'name'], ['vehicle', 'vehicle'], ['homeBranch', 'home branch'],
+                        ['contactPreference', 'contact preference']];
+        $('profile').replaceChildren(...fields.flatMap(([key, label]) => {
+            const term = document.createElement('dt');
+            term.textContent = label;
+            const value = document.createElement('dd');
+            value.textContent = next[key] ?? '—';
+            if (profile && next[key] && next[key] !== profile[key]) value.className = 'changed';
+            return [term, value];
+        }));
+        profile = next;
+    }
+
+    function showConversation() {
+        $('conversation-id').textContent = conversationId();
+        $('messages').replaceChildren();
+        addMessage('divider', `New conversation: ${conversationId()}`);
+        refreshControls();
+    }
+
+    // an ended conversation takes no more messages: its memory was cleared and its episode written
+    function refreshControls() {
+        for (const id of ['prompt', 'send-button', 'end-button']) $(id).disabled = ended;
+    }
+
+    function addMessage(kind, text) {
+        const element = document.createElement('div');
+        element.className = kind === 'divider' ? 'divider' : `msg ${kind}`;
+        element.textContent = text;
+        $('messages').append(element);
+        element.scrollIntoView({ block: 'end' });
+    }
+
+    function renderEpisodes(container, episodes, emptyText) {
+        if (!episodes || episodes.length === 0) {
+            container.innerHTML = '<p class="empty"></p>';
+            container.firstChild.textContent = emptyText;
+            return;
+        }
+        container.replaceChildren(...episodes.map(episode => {
+            const card = document.createElement('div');
+            card.className = 'episode';
+            card.innerHTML = '<div class="meta"><span></span><span></span></div><div></div>';
+            card.querySelector('.meta span:first-child').textContent = `${episode.endedOn} · ${episode.conversationId}`;
+            card.querySelector('.meta span:last-child').textContent =
+                episode.score == null ? 'new' : `score ${episode.score.toFixed(3)}`;
+            card.lastChild.textContent = episode.summary;
+            return card;
+        }));
+    }
+
+    async function busy(button, action) {
+        button.disabled = true;
+        try {
+            await action();
+        } catch (error) {
+            addMessage('error', `Request failed: ${error.message}. Check the application log.`);
+        } finally {
+            button.disabled = false;
+            refreshControls();
+        }
+    }
+
+    function read(key) { try { return localStorage.getItem(key); } catch { return null; } }
+    function write(key, value) { try { localStorage.setItem(key, value); } catch { /* demo still works */ } }
+</script>
+</body>
+</html>

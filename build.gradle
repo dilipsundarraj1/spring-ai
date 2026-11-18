@@ -1,7 +1,7 @@
 plugins {
     id 'java'
-    id 'org.springframework.boot' version '3.4.4' apply false
-    id 'io.spring.dependency-management' version '1.1.7' apply false
+    id 'org.springframework.boot' version '4.1.0' apply(false)
+    id 'io.spring.dependency-management' version '1.1.7' apply(false)
 }
 
 group = 'org.example'
@@ -23,20 +23,27 @@ allprojects {
 
 subprojects {
 
-    apply plugin: 'java'
-    apply plugin: 'org.springframework.boot'
-    apply plugin: 'io.spring.dependency-management'
-
     ext {
-        set('springAiVersion', "1.0.0")
+        set('springAiVersion', "2.0.0")
     }
 
-    java {
-        sourceCompatibility = JavaVersion.VERSION_21
-        targetCompatibility = JavaVersion.VERSION_21
-    }
+    // Only real modules (with their own build.gradle) are buildable applications.
+    // Aggregator/placeholder projects (mcp, mcp:mcp-server, ...) must not get the
+    // Spring Boot plugin, otherwise their bootJar task fails with "Main class name
+    // has not been configured".
+    if (project.file('build.gradle').exists()) {
 
-    tasks.named('test') {
-        useJUnitPlatform()
+        apply plugin: 'java'
+        apply plugin: 'org.springframework.boot'
+        apply plugin: 'io.spring.dependency-management'
+
+        java {
+            sourceCompatibility = JavaVersion.VERSION_25
+            targetCompatibility = JavaVersion.VERSION_25
+        }
+
+        tasks.named('test') {
+            useJUnitPlatform()
+        }
     }
 }

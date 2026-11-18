@@ -1,0 +1,62 @@
+{
+  "location": {
+    "name": "London",
+    "region": "City of London, Greater London",
+    "country": "United Kingdom",
+    "lat": 51.5171,
+    "lon": -0.1062,
+    "tz_id": "Europe/London",
+    "localtime_epoch": 1783161122,
+    "localtime": "2026-07-04 11:32"
+  },
+  "current": {
+    "last_updated_epoch": 1783160100,
+    "last_updated": "2026-07-04 11:15",
+    "temp_c": 22.2,
+    "temp_f": 72.0,
+    "is_day": 1,
+    "condition": {
+      "text": "Overcast",
+      "icon": "//cdn.weatherapi.com/weather/64x64/day/122.png",
+      "code": 1009
+    }
+  },
+  "forecast": {
+    "forecastday": [
+      {
+        "date": "2026-07-04",
+        "date_epoch": 1783123200,
+        "day": {
+          "maxtemp_c": 28.4,
+          "maxtemp_f": 83.2,
+          "mintemp_c": 15.5,
+          "mintemp_f": 59.9,
+          "avgtemp_c": 22.1,
+          "avgtemp_f": 71.9,
+          "condition": {
+            "text": "Sunny",
+            "icon": "//cdn.weatherapi.com/weather/64x64/day/113.png",
+            "code": 1000
+          }
+        }
+      },
+      {
+        "date": "2026-07-05",
+        "date_epoch": 1783209600,
+        "day": {
+          "maxtemp_c": 27.5,
+          "maxtemp_f": 81.4,
+          "mintemp_c": 17.6,
+          "mintemp_f": 63.6,
+          "avgtemp_c": 22.4,
+          "avgtemp_f": 72.3,
+          "condition": {
+            "text": "Sunny",
+            "icon": "//cdn.weatherapi.com/weather/64x64/day/113.png",
+            "code": 1000
+          },
+        }
+      }
+    ]
+  }
+}
