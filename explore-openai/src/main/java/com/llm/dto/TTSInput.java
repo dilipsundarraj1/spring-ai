@@ -1,14 +1,14 @@
 package com.llm.dto;
 
-import org.springframework.ai.openai.api.OpenAiAudioApi;
+import org.springframework.ai.openai.OpenAiAudioSpeechOptions;
 
 public record TTSInput(String prompt,
-                       Float speed,
+                       Double speed,
 
-                       OpenAiAudioApi.TtsModel model,
+                       String model,
 
-                       OpenAiAudioApi.SpeechRequest.AudioResponseFormat responseFormat,
-                        OpenAiAudioApi.SpeechRequest.Voice voice,
+                       OpenAiAudioSpeechOptions.AudioResponseFormat responseFormat,
+                       OpenAiAudioSpeechOptions.Voice voice,
                        String fileName
 ) {
 }

@@ -1,0 +1,27 @@
+server:
+  port: 9001
+
+spring:
+  ai:
+    openai:
+      api-key: ${OPENAI_KEY}
+      chat:
+        options:
+          model: gpt-5.5
+    mcp:
+      client:
+        name: my-weather-client-webflux
+        version: 0.0.1
+        type: ASYNC
+        request-timeout: 30s
+        streamable-http:
+          connections:
+            weather-server:
+              url: http://localhost:8081
+              endpoint: /mcp
+            currency-converter:
+              url: http://localhost:8082
+              endpoint: /mcp
+            inventory-server:
+              url: http://localhost:8083
+              endpoint: /mcp

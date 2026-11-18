@@ -2,6 +2,8 @@ package com.llm.tool_calling.currency;
 
 import com.llm.tool_calling.currency.dtos.CurrencyRequest;
 import com.llm.tool_calling.currency.dtos.CurrencyResponse;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ToolContext;
@@ -15,10 +17,22 @@ public class CurrencyTools {
 
     private final RestClient restClient;
     private final CurrencyExchangeConfigProperties currencyExchangeConfigProperties;
+    private final Counter invocationCounter;
+    private final Counter errorCounter;
 
-    public CurrencyTools(RestClient restClient, CurrencyExchangeConfigProperties currencyExchangeConfigProperties) {
+    public CurrencyTools(RestClient restClient,
+                         CurrencyExchangeConfigProperties currencyExchangeConfigProperties,
+                         MeterRegistry meterRegistry) {
         this.restClient = RestClient.create(currencyExchangeConfigProperties.baseUrl());
         this.currencyExchangeConfigProperties = currencyExchangeConfigProperties;
+        this.invocationCounter = Counter.builder("tool.invocations")
+                .tag("tool", "currency")
+                .description("Number of times the currency tool was invoked")
+                .register(meterRegistry);
+        this.errorCounter = Counter.builder("tool.invocation.errors")
+                .tag("tool", "currency")
+                .description("Number of currency tool invocations that resulted in an error")
+                .register(meterRegistry);
     }
 
 //    @Tool(description = "Fetch the latest currency exchange rates")
@@ -27,6 +41,7 @@ public class CurrencyTools {
 returnDirect = true)
 public CurrencyResponse getCurrencyRates(CurrencyRequest currencyRequest,
                                          ToolContext toolContext) {
+        invocationCounter.increment();
         log.info("RestClient CurrencyTools is invoked - getCurrencyRates: {}", currencyRequest);
 
         if(toolContext!=null){
@@ -48,8 +63,9 @@ public CurrencyResponse getCurrencyRates(CurrencyRequest currencyRequest,
             return response;
 
         } catch (Exception e) {
+            errorCounter.increment();
             log.error("Error occurred while fetching the currency rates : ", e);
-            throw  e;
+            throw e;
         }
 
     }

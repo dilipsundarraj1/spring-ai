@@ -1,0 +1,26 @@
+server:
+  port: 9091
+
+spring:
+  main:
+    web-application-type: none
+    # NOTE: You must disable the banner and the console logging
+    # to allow the STDIO transport to work !!!
+    banner-mode: "off"
+  ai:
+    mcp:
+      server:
+        name: my-weather-server
+        version: 0.0.1
+        type: SYNC
+        stdio: true
+
+weather:
+  api-key: ${WEATHER_API_KEY}
+  api-url: http://api.weatherapi.com/v1
+
+logging:
+    pattern:
+      console: ""
+    file:
+      name: ./build/mcp-weather-stdio-server.log

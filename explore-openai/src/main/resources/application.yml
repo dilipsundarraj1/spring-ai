@@ -2,24 +2,49 @@ server:
   servlet:
     context-path: /springai
 spring:
+  application:
+    name: explore-openai
   ai:
     openai:
       api-key: ${OPENAI_KEY}
       chat:
         options:
-          model: gpt-4.1 #gpt-4.1, gpt-4o
-          temperature: 0.7
+          model: gpt-5-nano #gpt-4.1, gpt-4o
+          temperature: 1.0
           max-completion-tokens: 2000
 logging:
   level:
     org:
       springframework:
         ai.chat.client.advisor.SimpleLoggerAdvisor: DEBUG
+      com.llm: INFO
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,info
+  otlp:
+    metrics:
+      export:
+        url: http://localhost:4318/v1/metrics
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: http://localhost:4318/v1/traces
+    logging:
+      export:
+        otlp:
+          endpoint: http://localhost:4318/v1/logs
+  tracing:
+    sampling:
+      probability: 1.0
+
 
 weather:
-  api-key : 
+  api-key : ${WEATHER_API_KEY}
   api-url : http://api.weatherapi.com/v1
 
 currency-exchange:
-  api-key :
+  api-key : ${CURRENCY_EXCHANGE_API_KEY}
   base-url: https://openexchangerates.org/api

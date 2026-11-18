@@ -116,7 +116,8 @@ public class IngestionService implements CommandLineRunner {
         var docs = new TikaDocumentReader(pdfResource).get();
         return switch (ingestType){
             case "token" -> {
-                TokenTextSplitter splitter = new TokenTextSplitter();
+                TokenTextSplitter splitter =  TokenTextSplitter.builder()
+                        .build();
 //                TokenTextSplitter splitter = new TokenTextSplitter(1000, 400, 10, 5000, true);
 
                 yield splitter.apply(docs);

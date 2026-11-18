@@ -1,20 +1,18 @@
 package com.llm.dto;
 
-import jakarta.annotation.Nonnull;
 import jakarta.validation.constraints.NotBlank;
-import org.springframework.ai.openai.api.OpenAiAudioApi;
-
-import javax.validation.constraints.NotNull;
+import jakarta.validation.constraints.NotNull;
+import org.springframework.ai.openai.OpenAiAudioSpeechOptions;
 
 public record TTSInput(String prompt,
                        @NotNull(message = "speed cannot be null")
-                       Float speed,
+                       Double speed,
                        @NotNull(message = "model cannot be null")
-                       OpenAiAudioApi.TtsModel model,
+                       String model,
                        @NotNull(message = "responseFormat cannot be null")
-                       OpenAiAudioApi.SpeechRequest.AudioResponseFormat responseFormat,
+                       OpenAiAudioSpeechOptions.AudioResponseFormat responseFormat,
                        @NotNull(message = "voice cannot be null")
-                        OpenAiAudioApi.SpeechRequest.Voice voice,
+                       OpenAiAudioSpeechOptions.Voice voice,
                        @NotBlank(message = "fileName cannot be null/blank")
                        String fileName
 ) {
